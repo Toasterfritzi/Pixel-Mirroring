@@ -10,7 +10,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import android.content.Intent
 import dev.pixelmirroring.app.service.AdbWifiManager
+import dev.pixelmirroring.app.service.MirroringService
 
 class MainActivity : ComponentActivity() {
 
@@ -20,6 +24,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         
         adbWifiManager = AdbWifiManager(this)
+
+        // Start Foreground Service
+        if (adbWifiManager.hasSecureSettingsPermission()) {
+            val serviceIntent = Intent(this, MirroringService::class.java)
+            startForegroundService(serviceIntent)
+        }
 
         setContent {
             MaterialTheme {
@@ -36,6 +46,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun SetupScreen(adbWifiManager: AdbWifiManager) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var hasPermission by remember { mutableStateOf(adbWifiManager.hasSecureSettingsPermission()) }
 
     Column(
@@ -53,7 +64,7 @@ fun SetupScreen(adbWifiManager: AdbWifiManager) {
 
         if (hasPermission) {
             Icon(
-                imageVector = androidx.compose.material.icons.Icons.Default.CheckCircle,
+                imageVector = Icons.Filled.CheckCircle,
                 contentDescription = "Success",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(64.dp).padding(bottom = 16.dp)
@@ -63,7 +74,7 @@ fun SetupScreen(adbWifiManager: AdbWifiManager) {
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
-                text = "Du kannst nun den Desktop-Client starten.",
+                text = "Du kannst nun den Desktop-Client starten. Der Hintergrunddienst lauscht auf eingehende Verbindungen.",
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 8.dp)
             )
@@ -87,7 +98,13 @@ fun SetupScreen(adbWifiManager: AdbWifiManager) {
             }
             
             Button(
-                onClick = { hasPermission = adbWifiManager.hasSecureSettingsPermission() },
+                onClick = { 
+                    hasPermission = adbWifiManager.hasSecureSettingsPermission() 
+                    if (hasPermission) {
+                        val serviceIntent = Intent(context, MirroringService::class.java)
+                        context.startForegroundService(serviceIntent)
+                    }
+                },
                 modifier = Modifier.padding(top = 24.dp)
             ) {
                 Text("Status aktualisieren")
