@@ -6,6 +6,7 @@
 #include "stream/video_decoder.h"
 #include "stream/video_renderer.h"
 #include "input/input_handler.h"
+#include "network/network_scanner.h"
 
 int main(int argc, char* argv[]) {
     std::cout << "=== Pixel Mirroring Desktop Client ===" << std::endl;
@@ -23,6 +24,18 @@ int main(int argc, char* argv[]) {
         std::cout << "\nSetup complete! The Android app now has the necessary permissions." << std::endl;
     } else {
         std::cout << "\nNo USB device found, skipping auto-setup." << std::endl;
+    }
+
+    std::cout << "\nScanning for Android devices on the network..." << std::endl;
+    pm::network::NetworkScanner scanner;
+    // We should use a persistent client ID, but a random/hardcoded one is okay for now
+    auto discovered = scanner.discover_and_connect("desktop-client-1234", "Desktop-PC");
+    
+    if (discovered) {
+        std::cout << "Attempting to connect ADB to " << discovered->ip << ":" << discovered->adb_port << "..." << std::endl;
+        adb.connect_device(discovered->ip, discovered->adb_port);
+    } else {
+        std::cout << "Could not discover the Android app. Make sure it is open and connected to WiFi." << std::endl;
     }
 
     std::cout << "\nStarting Native UI..." << std::endl;

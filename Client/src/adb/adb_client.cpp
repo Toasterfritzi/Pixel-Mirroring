@@ -95,8 +95,44 @@ std::vector<Device> AdbClient::get_connected_devices() {
     return devices;
 }
 
+bool AdbClient::connect_device(const std::string& ip, int port) {
+    std::string target = ip + ":" + std::to_string(port);
+    std::cout << "[ADB] Connecting to " << target << "..." << std::endl;
+    std::string output = run_adb_command({"connect", target});
+    
+    // Output looks like "connected to 192.168.1.5:5555" or "cannot connect to..."
+    if (output.find("connected to") != std::string::npos || output.find("already connected") != std::string::npos) {
+        std::cout << "[ADB] Successfully connected to " << target << std::endl;
+        return true;
+    }
+    
+    std::cerr << "[ADB] Failed to connect: " << output << std::endl;
+    return false;
+}
+
 std::string AdbClient::execute_shell_command(const std::string& device_id, const std::string& command) {
     return run_adb_command({"-s", device_id, "shell", command});
+}
+
+bool AdbClient::push_file(const std::string& device_id, const std::string& local_path, const std::string& remote_path) {
+    std::string output = run_adb_command({"-s", device_id, "push", local_path, remote_path});
+    if (output.find("error:") != std::string::npos || output.find("failed to copy") != std::string::npos) {
+        std::cerr << "[ADB] Failed to push file: " << output << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool AdbClient::forward_port(const std::string& device_id, const std::string& local, const std::string& remote) {
+    std::string output = run_adb_command({"-s", device_id, "forward", local, remote});
+    if (output.find("error:") != std::string::npos) return false;
+    return true;
+}
+
+bool AdbClient::reverse_port(const std::string& device_id, const std::string& remote, const std::string& local) {
+    std::string output = run_adb_command({"-s", device_id, "reverse", remote, local});
+    if (output.find("error:") != std::string::npos) return false;
+    return true;
 }
 
 bool AdbClient::auto_grant_secure_settings() {

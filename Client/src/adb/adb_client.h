@@ -32,8 +32,18 @@ public:
     // Returns a list of currently connected devices
     std::vector<Device> get_connected_devices();
 
+    // Connects to a device via TCP/IP
+    bool connect_device(const std::string& ip, int port = 5555);
+
     // Executes a shell command on a specific device
     std::string execute_shell_command(const std::string& device_id, const std::string& command);
+
+    // Pushes a file to the device
+    bool push_file(const std::string& device_id, const std::string& local_path, const std::string& remote_path);
+
+    // Setup port forwarding/reversing
+    bool forward_port(const std::string& device_id, const std::string& local, const std::string& remote);
+    bool reverse_port(const std::string& device_id, const std::string& remote, const std::string& local);
 
     // Automatically finds a USB device and grants WRITE_SECURE_SETTINGS
     bool auto_grant_secure_settings();

@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # We will assume these are installed via vcpkg or system package manager
 # find_package(SDL2 REQUIRED)
 # find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swscale)
+find_package(httplib CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # Platform-specific sources
 if(WIN32)
@@ -25,6 +27,7 @@ endif()
 add_executable(PixelMirroring
     src/main.cpp
     src/adb/adb_client.cpp
+    src/network/network_scanner.cpp
     # src/adb/device_manager.cpp
     # src/stream/scrcpy_protocol.cpp
     # src/stream/video_decoder.cpp
@@ -35,6 +38,7 @@ add_executable(PixelMirroring
 )
 
 # target_link_libraries(PixelMirroring PRIVATE SDL2::SDL2 ${FFMPEG_LIBRARIES})
+target_link_libraries(PixelMirroring PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
 
 if(WIN32)
     # Required for custom window frame and GDI drawing on Windows
