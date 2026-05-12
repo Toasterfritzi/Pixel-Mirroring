@@ -142,6 +142,11 @@ bool ScrcpyClient::start_server_process() {
         }
     }
 
+    if (!std::filesystem::exists(server_path)) {
+        std::cerr << "[Scrcpy] ERROR: scrcpy-server.jar not found! Make sure it is downloaded." << std::endl;
+        return false;
+    }
+
     if (!adb.push_file(config_.device_id, server_path.string(), "/data/local/tmp/scrcpy-server.jar")) {
         std::cerr << "[Scrcpy] Could not push scrcpy-server.jar!" << std::endl;
         return false;

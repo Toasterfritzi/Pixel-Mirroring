@@ -55,17 +55,18 @@ std::vector<std::string> NetworkScanner::get_local_ipv4_bases() {
                             std::string base16 = ip.substr(0, second_dot + 1);
                             int third_octet = std::stoi(ip.substr(second_dot + 1, third_dot - second_dot - 1));
                             
-                            // Scan a small window around the PC's third octet to avoid 65000 requests
-                            int start = std::max(0, third_octet - 5);
-                            int end = std::min(255, third_octet + 5);
+                            // Scan a slightly larger window around the PC's third octet
+                            int start = std::max(0, third_octet - 10);
+                            int end = std::min(255, third_octet + 10);
                             for (int i = start; i <= end; ++i) {
                                 bases.push_back(base16 + std::to_string(i) + ".");
                             }
                             
-                            // Also always include .0 and .1 and .2
-                            bases.push_back(base16 + "0.");
-                            bases.push_back(base16 + "1.");
-                            bases.push_back(base16 + "2.");
+                            // Also always include common third octets
+                            std::vector<int> common_octets = {0, 1, 2, 10, 20, 50, 100, 150, 200};
+                            for (int octet : common_octets) {
+                                bases.push_back(base16 + std::to_string(octet) + ".");
+                            }
                         }
                     } else {
                         // Standard /24
@@ -153,7 +154,7 @@ std::optional<DiscoveredDevice> NetworkScanner::discover_and_connect(const std::
                     
                     httplib::Client cli(target_ip, 18294);
                     cli.set_connection_timeout(0, 800000); // 800ms
-                    cli.set_read_timeout(1, 500000);       // 1.5s
+                    cli.set_read_timeout(3, 500000);       // 3.5s
                     
                     auto res = cli.Post("/connect", req_str, "application/json");
                     

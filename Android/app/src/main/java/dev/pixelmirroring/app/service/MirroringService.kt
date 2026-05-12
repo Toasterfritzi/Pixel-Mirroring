@@ -25,6 +25,8 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MirroringService : Service() {
     companion object {
@@ -35,6 +37,7 @@ class MirroringService : Service() {
     private var server: ApplicationEngine? = null
     private val adbWifiManager by lazy { AdbWifiManager(this) }
     private val clientStore by lazy { PairedClientStore(this) }
+    private val pairingMutex = Mutex()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -68,21 +71,29 @@ class MirroringService : Service() {
                 post("/connect") {
                     val request = call.receive<ConnectRequest>()
                     
-                    val isAuthorized = clientStore.isClientPaired(request.clientId)
+                    var isAuthorized = false
+                    pairingMutex.withLock {
+                        isAuthorized = clientStore.isClientPaired(request.clientId)
+                        if (isAuthorized && clientStore.getPairedClient() == null) {
+                            // Auto-pair if no one is paired yet
+                            clientStore.savePairedClient(request.clientId, request.clientName)
+                        }
+                    }
                     
                     if (!isAuthorized) {
                         call.respond(HttpStatusCode.Forbidden)
                         return@post
                     }
-                    
-                    // Auto-pair if no one is paired yet
-                    if (clientStore.getPairedClient() == null) {
-                        clientStore.savePairedClient(request.clientId, request.clientName)
-                    }
 
                     // Activate ADB WiFi
-                    val adbPort = (5555..5595).random()
+                    var adbPort = (5555..5595).random()
                     val success = adbWifiManager.enableAdbWifi() && adbWifiManager.enableAdbTcpIp(adbPort)
+                    
+                    // Attempt to resolve dynamic TLS port for Android 11+
+                    val dynamicPort = adbWifiManager.getDynamicAdbPort()
+                    if (dynamicPort != -1) {
+                        adbPort = dynamicPort
+                    }
                     
                     val ips = NetworkScanner.getAllLocalIps(this@MirroringService)
                     

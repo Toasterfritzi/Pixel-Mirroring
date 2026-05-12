@@ -1,6 +1,8 @@
 package dev.pixelmirroring.app.service
 
 import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.provider.Settings
 import android.util.Log
 
@@ -24,7 +26,7 @@ class AdbWifiManager(private val context: Context) {
                 ADB_WIFI_ENABLED,
                 0
             )
-            kotlinx.coroutines.delay(100)
+            kotlinx.coroutines.delay(500)
             Settings.Global.putInt(
                 context.contentResolver,
                 ADB_WIFI_ENABLED,
@@ -42,6 +44,53 @@ class AdbWifiManager(private val context: Context) {
     }
 
     /**
+     * Versucht den dynamischen ADB Wireless Port via NSD (mDNS) zu finden.
+     */
+    suspend fun getDynamicAdbPort(): Int {
+        var discoveredPort = -1
+        val nsdManager = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
+            ?: return -1
+
+        val listener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) {}
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                if (serviceInfo.serviceName.contains("adb")) {
+                    try {
+                        nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                            override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                            override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                                discoveredPort = serviceInfo.port
+                            }
+                        })
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Resolve failed", e)
+                    }
+                }
+            }
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
+            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        }
+
+        try {
+            nsdManager.discoverServices("_adb-tls-connect._tcp.", NsdManager.PROTOCOL_DNS_SD, listener)
+            
+            // Wait up to 3 seconds for port to be discovered
+            for (i in 0..30) {
+                if (discoveredPort != -1) break
+                kotlinx.coroutines.delay(100)
+            }
+            
+            nsdManager.stopServiceDiscovery(listener)
+        } catch (e: Exception) {
+            Log.e(TAG, "NSD Discovery failed", e)
+        }
+        
+        return discoveredPort
+    }
+
+    /**
      * Startet das ADB TCP/IP Protokoll auf einem festen Port (Standard 5555).
      */
     suspend fun enableAdbTcpIp(port: Int = 5555): Boolean {
@@ -52,7 +101,7 @@ class AdbWifiManager(private val context: Context) {
                 ADB_TCP_PORT,
                 "-1"
             )
-            kotlinx.coroutines.delay(100)
+            kotlinx.coroutines.delay(500)
             Settings.Global.putString(
                 context.contentResolver,
                 ADB_TCP_PORT,
