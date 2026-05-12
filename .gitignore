@@ -26,6 +26,9 @@ Client/PreviewWindow.exe
 *.pdb
 *.bin
 
+# Java / Android debug artifacts
+*.hprof
+
 # OS
 .DS_Store
 Thumbs.db

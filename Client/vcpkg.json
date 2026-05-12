@@ -1,0 +1,9 @@
+{
+  "name": "pixel-mirroring",
+  "version": "0.1.0",
+  "dependencies": [
+    "sdl2",
+    "ffmpeg",
+    "nlohmann-json"
+  ]
+}

@@ -18,6 +18,9 @@ public:
     
     void set_aspect_ratio(double ratio) override;
     void set_orientation(bool landscape) override;
+    
+    void* get_native_handle() override { return hwnd_; }
+    void set_render_callback(std::function<void()> cb) override { render_cb_ = std::move(cb); }
 
 private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -49,6 +52,8 @@ private:
     RECT rect_phone_{0};
     RECT rect_bubble_{0};
     RECT rect_drag_{0}, rect_min_{0}, rect_max_{0}, rect_close_{0};
+    
+    std::function<void()> render_cb_;
 };
 
 } // namespace pm::window

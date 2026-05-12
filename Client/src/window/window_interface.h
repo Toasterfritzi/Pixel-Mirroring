@@ -22,6 +22,12 @@ public:
     
     // Signals the window that the orientation has changed.
     virtual void set_orientation(bool landscape) = 0;
+    
+    // Returns the underlying OS window handle (HWND or NSWindow*)
+    virtual void* get_native_handle() = 0;
+    
+    // Sets a callback to be called whenever the window repaints its client area
+    virtual void set_render_callback(std::function<void()> cb) = 0;
 };
 
 // Factory function to create the appropriate window implementation for the current OS.

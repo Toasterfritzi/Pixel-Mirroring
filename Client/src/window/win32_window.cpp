@@ -71,6 +71,9 @@ bool Win32Window::create() {
 
     recalc_layout();
     update_region();
+    
+    // Set a timer to force repaint at ~60 FPS so SDL can render
+    SetTimer(hwnd_, 1, 16, nullptr);
 
     return true;
 }
@@ -275,9 +278,14 @@ void Win32Window::handle_paint() {
     SelectObject(mem_dc, old_font);
 
     // Placeholder text in phone screen
-    SetTextColor(mem_dc, RGB(160, 160, 160));
-    RECT text_rect = rect_phone_;
-    DrawTextA(mem_dc, "Phone Screen Video Area", -1, &text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (render_cb_) {
+        // We let the callback (SDL2) draw the phone screen area
+        render_cb_();
+    } else {
+        SetTextColor(mem_dc, RGB(160, 160, 160));
+        RECT text_rect = rect_phone_;
+        DrawTextA(mem_dc, "Waiting for Video Stream...", -1, &text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
     
     // Copy to screen
     BitBlt(hdc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
@@ -291,6 +299,12 @@ void Win32Window::handle_paint() {
 
 LRESULT Win32Window::handle_message(UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
+        case WM_TIMER:
+            if (wparam == 1) {
+                InvalidateRect(hwnd_, &rect_phone_, FALSE);
+            }
+            return 0;
+            
         case WM_SIZE:
             if (wparam != SIZE_MINIMIZED) {
                 recalc_layout();
