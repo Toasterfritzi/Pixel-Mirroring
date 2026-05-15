@@ -20,6 +20,7 @@
 
 static int app_main() {
 #ifdef _WIN32
+    SetProcessDPIAware();
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
     Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);

@@ -186,8 +186,8 @@ void Win32Window::handle_paint() {
 
         // Phone background
         Gdiplus::RectF pr((float)rect_phone_.left, (float)rect_phone_.top,
-            (float)(rect_phone_.right - rect_phone_.left),
-            (float)(rect_phone_.bottom - rect_phone_.top));
+            (float)(rect_phone_.right - rect_phone_.left) - 1.0f,
+            (float)(rect_phone_.bottom - rect_phone_.top) - 1.0f);
         {
             Gdiplus::GraphicsPath pp;
             AddRoundedRect(pp, pr, (float)PHONE_CORNER_RADIUS);
@@ -199,8 +199,8 @@ void Win32Window::handle_paint() {
 
         // Bubble background
         Gdiplus::RectF bbr((float)rect_bubble_.left, (float)rect_bubble_.top,
-            (float)(rect_bubble_.right - rect_bubble_.left),
-            (float)(rect_bubble_.bottom - rect_bubble_.top));
+            (float)(rect_bubble_.right - rect_bubble_.left) - 1.0f,
+            (float)(rect_bubble_.bottom - rect_bubble_.top) - 1.0f);
         {
             Gdiplus::GraphicsPath bp;
             AddRoundedRect(bp, bbr, (float)BUBBLE_CORNER_RADIUS);
@@ -217,7 +217,7 @@ void Win32Window::handle_paint() {
             Gdiplus::Color hc = (hovered_button_ == 3)
                 ? Gdiplus::Color(255, 196, 43, 28) : Gdiplus::Color(255, 75, 75, 75);
             Gdiplus::RectF hrf((float)hr.left, (float)hr.top,
-                (float)(hr.right-hr.left), (float)(hr.bottom-hr.top));
+                (float)(hr.right-hr.left) - 1.0f, (float)(hr.bottom-hr.top) - 1.0f);
 
             // Clip to bubble shape
             Gdiplus::GraphicsPath clip;
