@@ -262,6 +262,10 @@ void Win32Window::handle_paint() {
     DeleteObject(bmp);
     DeleteDC(mem);
     EndPaint(hwnd_, &ps);
+
+    if (app_state_ == AppState::STREAMING && render_cb_) {
+        render_cb_();
+    }
 }
 
 void Win32Window::draw_setup_screen(Gdiplus::Graphics& g) {
@@ -366,9 +370,7 @@ void Win32Window::draw_connected_screen(Gdiplus::Graphics& g) {
 }
 
 void Win32Window::draw_streaming_screen(Gdiplus::Graphics& g) {
-    if (render_cb_) {
-        render_cb_();
-    } else {
+    if (!render_cb_) {
         Gdiplus::StringFormat sf;
         sf.SetAlignment(Gdiplus::StringAlignmentCenter);
         sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);

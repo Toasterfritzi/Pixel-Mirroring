@@ -356,7 +356,8 @@ void ScrcpyClient::video_thread_loop() {
             break;
         }
 
-        bool is_config = (pts == ((uint64_t)-1)); // Scrcpy sends PTS -1 for config packets sometimes
+        constexpr uint64_t SC_PACKET_FLAG_CONFIG = 1ULL << 63;
+        bool is_config = (pts & SC_PACKET_FLAG_CONFIG) != 0;
 
         packet_data.resize(size);
         if (!recv_all((char*)packet_data.data(), size)) break;

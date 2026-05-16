@@ -376,6 +376,14 @@ bool start_stream(
     pm::stream::ScrcpyClient::Config config;
     config.device_id = device_id;
 
+    renderer.init(window.get_native_handle());
+    scrcpy.set_frame_callback([&](AVFrame* frame) {
+        renderer.render_frame(frame);
+    });
+    window.set_render_callback([&]() {
+        renderer.render_frame(nullptr);
+    });
+
     if (!scrcpy.start(config)) {
         window.set_app_state(pm::window::AppState::SETUP);
         window.set_status_text("Stream konnte nicht gestartet werden.");
@@ -383,13 +391,6 @@ bool start_stream(
     }
 
     window.set_app_state(pm::window::AppState::STREAMING);
-    renderer.init(window.get_native_handle());
-    scrcpy.set_frame_callback([&](AVFrame* frame) {
-        renderer.render_frame(nullptr);
-    });
-    window.set_render_callback([&]() {
-        renderer.render_frame(nullptr);
-    });
     return true;
 }
 }

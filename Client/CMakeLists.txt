@@ -4,10 +4,7 @@ project(PixelMirroring VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find necessary packages
-# We will assume these are installed via vcpkg or system package manager
-# find_package(SDL2 REQUIRED)
-# find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swscale)
+find_package(FFMPEG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -30,11 +27,16 @@ add_executable(PixelMirroring
     src/network/network_scanner.cpp
     # src/adb/device_manager.cpp
     src/stream/scrcpy_client.cpp
-    src/stream/video_stubs.cpp
+    src/stream/video_decoder.cpp
+    src/stream/video_renderer.cpp
     src/input/input_handler.cpp
     # src/config/settings.cpp
     ${PLATFORM_SOURCES}
 )
+
+if(MSVC)
+    target_compile_options(PixelMirroring PRIVATE /EHsc)
+endif()
 
 set(PM_ANDROID_APK_CANDIDATES
     "${CMAKE_SOURCE_DIR}/../Android/app/build/outputs/apk/debug/app-debug.apk"
@@ -79,8 +81,9 @@ if(WIN32)
     endforeach()
 endif()
 
-# target_link_libraries(PixelMirroring PRIVATE SDL2::SDL2 ${FFMPEG_LIBRARIES})
-target_link_libraries(PixelMirroring PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+target_include_directories(PixelMirroring PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_link_directories(PixelMirroring PRIVATE ${FFMPEG_LIBRARY_DIRS})
+target_link_libraries(PixelMirroring PRIVATE ${FFMPEG_LIBRARIES} httplib::httplib nlohmann_json::nlohmann_json)
 
 if(WIN32)
     # Required for custom window frame and GDI drawing on Windows
