@@ -21,8 +21,8 @@ private:
     void window_to_device(int wx, int wy, int ww, int wh, int* dx, int* dy);
     
     pm::stream::ScrcpyClient* client_;
-    int device_width_{1080};
-    int device_height_{1920};
+    int m_device_width{1080};
+    int m_device_height{1920};
 };
 
 } // namespace pm::input

@@ -2,6 +2,7 @@
 #include "win32_window.h"
 #include <windowsx.h>
 #include <algorithm>
+#include <SDL2/SDL.h>
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -40,6 +41,9 @@ std::unique_ptr<IWindow> create_window(int w, int h, const std::string& t) {
 Win32Window::Win32Window(int w, int h, const std::string& t) : width_(w), height_(h), title_(t) {}
 
 Win32Window::~Win32Window() {
+    if (m_sdl_renderer) SDL_DestroyRenderer(m_sdl_renderer);
+    if (m_sdl_window) SDL_DestroyWindow(m_sdl_window);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
     if (icon_font_) DeleteObject(icon_font_);
     if (hwnd_) DestroyWindow(hwnd_);
 }
@@ -70,6 +74,12 @@ bool Win32Window::create() {
     icon_font_ = CreateFontW(14, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+
+    SDL_Init(SDL_INIT_VIDEO);
+    m_sdl_window = SDL_CreateWindowFrom(hwnd_);
+    if (m_sdl_window) {
+        m_sdl_renderer = SDL_CreateRenderer(m_sdl_window, -1, SDL_RENDERER_ACCELERATED);
+    }
 
     recalc_layout();
     update_region();
@@ -307,13 +317,18 @@ void Win32Window::handle_paint() {
         }
     }
 
-    if (app_state_ == AppState::STREAMING && render_cb_) {
-        render_cb_(mem, rect_phone_.left, rect_phone_.top,
+    if (app_state_ == AppState::STREAMING && m_render_cb_ && m_sdl_renderer) {
+        // Blit GDI+ UI first (top bubble)
+        BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+        
+        m_render_cb_(m_sdl_renderer, rect_phone_.left, rect_phone_.top,
             rect_phone_.right - rect_phone_.left,
             rect_phone_.bottom - rect_phone_.top);
+        SDL_RenderPresent(m_sdl_renderer);
+    } else {
+        BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
     }
 
-    BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old);
     DeleteObject(bmp);
     DeleteDC(mem);
@@ -422,7 +437,7 @@ void Win32Window::draw_connected_screen(Gdiplus::Graphics& g) {
 }
 
 void Win32Window::draw_streaming_screen(Gdiplus::Graphics& g) {
-    if (!render_cb_) {
+    if (!m_render_cb_) {
         Gdiplus::StringFormat sf;
         sf.SetAlignment(Gdiplus::StringAlignmentCenter);
         sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);

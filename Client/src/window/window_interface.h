@@ -41,13 +41,13 @@ public:
     // Returns the underlying OS window handle (HWND or NSWindow*)
     virtual void* get_native_handle() = 0;
 
-    // Sets a callback to paint the latest video frame into the phone area.
-    virtual void set_render_callback(std::function<void(void*, int, int, int, int)> cb) = 0;
+    // Set render callback. Paint latest frame in phone area.
+    virtual void set_render_callback(std::function<void(struct SDL_Renderer*, int, int, int, int)> cb) = 0;
 
-    // Sets a callback that receives the current video viewport inside the window.
+    // Set video viewport callback. Receive current phone area size.
     virtual void set_video_viewport_callback(std::function<void(int, int, int, int)> cb) = 0;
 
-    // Sets a callback for pointer input inside the video viewport.
+    // Set pointer callback. Handle click and drag in video.
     virtual void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) = 0;
     
     // Sets the current app state (changes what is drawn in the phone area)
@@ -58,6 +58,7 @@ public:
     
     // Sets a callback for when the user clicks the "Start" button in SETUP state
     virtual void set_start_callback(std::function<void()> cb) = 0;
+    virtual void post_task(std::function<void()> task) = 0;
 };
 
 // Factory function to create the appropriate window implementation for the current OS.

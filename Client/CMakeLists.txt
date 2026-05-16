@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(FFMPEG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(SDL2 CONFIG REQUIRED)
 
 # Platform-specific sources
 if(WIN32)
@@ -87,6 +88,7 @@ target_link_libraries(PixelMirroring PRIVATE
     ${FFMPEG_LIBRARIES}
     httplib::httplib
     nlohmann_json::nlohmann_json
+    SDL2::SDL2
 )
 
 add_custom_command(TARGET PixelMirroring POST_BUILD

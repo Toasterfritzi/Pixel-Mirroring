@@ -86,22 +86,26 @@ bool VideoDecoder::decode(const uint8_t* data, size_t size, bool) {
         return false;
     }
 
-    ret = avcodec_receive_frame(codec_ctx_, frame_);
-    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        return false;
-    }
-    if (ret < 0) {
-        log_ffmpeg_error("[Decoder] Could not receive frame", ret);
-        return false;
+    bool got_frame = false;
+    while (true) {
+        ret = avcodec_receive_frame(codec_ctx_, frame_);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            break;
+        }
+        if (ret < 0) {
+            log_ffmpeg_error("[Decoder] Could not receive frame", ret);
+            break;
+        }
+
+        if (frame_->width != last_width_ || frame_->height != last_height_) {
+            last_width_ = frame_->width;
+            last_height_ = frame_->height;
+            resolution_changed_ = true;
+        }
+        got_frame = true;
     }
 
-    if (frame_->width != last_width_ || frame_->height != last_height_) {
-        last_width_ = frame_->width;
-        last_height_ = frame_->height;
-        resolution_changed_ = true;
-    }
-
-    return true;
+    return got_frame;
 }
 
 bool VideoDecoder::has_resolution_changed(int* out_w, int* out_h) {

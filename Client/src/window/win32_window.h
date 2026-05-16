@@ -24,12 +24,13 @@ public:
     void set_orientation(bool landscape) override;
     
     void* get_native_handle() override { return hwnd_; }
-    void set_render_callback(std::function<void(void*, int, int, int, int)> cb) override { render_cb_ = std::move(cb); }
+    void set_render_callback(std::function<void(struct SDL_Renderer*, int, int, int, int)> cb) override { m_render_cb_ = std::move(cb); }
     void set_video_viewport_callback(std::function<void(int, int, int, int)> cb) override;
-    void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) override { pointer_cb_ = std::move(cb); }
+    void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) override { m_pointer_cb_ = std::move(cb); }
     void set_app_state(AppState state) override;
     void set_status_text(const std::string& text) override;
     void set_start_callback(std::function<void()> cb) override { start_cb_ = std::move(cb); }
+    void post_task(std::function<void()> task) override;
 
 private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -54,6 +55,8 @@ private:
     bool is_start_button_hit(POINT client_pt);
 
     HWND hwnd_{nullptr};
+    struct SDL_Window* m_sdl_window{nullptr};
+    struct SDL_Renderer* m_sdl_renderer{nullptr};
     HFONT icon_font_{nullptr};
     int width_;
     int height_;
@@ -78,9 +81,9 @@ private:
     int scan_animation_frame_{0};
     
     // Callbacks
-    std::function<void(void*, int, int, int, int)> render_cb_;
-    std::function<void(int, int, int, int)> viewport_cb_;
-    std::function<void(PointerAction, int, int, int, int)> pointer_cb_;
+    std::function<void(struct SDL_Renderer*, int, int, int, int)> m_render_cb_;
+    std::function<void(int, int, int, int)> m_viewport_cb_;
+    std::function<void(PointerAction, int, int, int, int)> m_pointer_cb_;
     std::function<void()> start_cb_;
 };
 

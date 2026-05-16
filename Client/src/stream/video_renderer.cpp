@@ -7,6 +7,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <SDL2/SDL.h>
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -25,12 +27,12 @@ VideoRenderer::~VideoRenderer() {
 }
 
 bool VideoRenderer::init(void* native_window_handle) {
-    native_window_handle_ = native_window_handle;
-    return native_window_handle_ != nullptr;
+    m_native_window_handle = native_window_handle;
+    return m_native_window_handle != nullptr;
 }
 
 void VideoRenderer::render_frame(void* frame) {
-    if (!native_window_handle_ || !frame) {
+    if (!m_native_window_handle || !frame) {
         return;
     }
 
@@ -42,19 +44,16 @@ void VideoRenderer::render_frame(void* frame) {
     }
 
     {
-        std::lock_guard<std::mutex> lock(frame_mutex_);
-        if (width != frame_width_ || height != frame_height_) {
-            frame_width_ = width;
-            frame_height_ = height;
-            bgra_buffer_.assign(static_cast<size_t>(width) * height * 4, 0);
-            if (sws_ctx_) {
-                sws_freeContext(sws_ctx_);
-                sws_ctx_ = nullptr;
-            }
+        std::lock_guard<std::mutex> lock(m_frame_mutex);
+        if (width != m_frame_width || height != m_frame_height) {
+            m_frame_width = width;
+            m_frame_height = height;
+            m_bgra_buffer.assign(static_cast<size_t>(width) * height * 4, 0);
+            m_sws_ctx.reset();
         }
 
-        sws_ctx_ = sws_getCachedContext(
-            sws_ctx_,
+        m_sws_ctx.reset(sws_getCachedContext(
+            m_sws_ctx.release(),
             width,
             height,
             static_cast<AVPixelFormat>(av_frame->format),
@@ -65,16 +64,16 @@ void VideoRenderer::render_frame(void* frame) {
             nullptr,
             nullptr,
             nullptr
-        );
-        if (!sws_ctx_) {
+        ));
+        if (!m_sws_ctx) {
             std::cerr << "[Renderer] Could not create scaler" << std::endl;
             return;
         }
 
-        uint8_t* dst_data[4] = { bgra_buffer_.data(), nullptr, nullptr, nullptr };
+        uint8_t* dst_data[4] = { m_bgra_buffer.data(), nullptr, nullptr, nullptr };
         int dst_linesize[4] = { width * 4, 0, 0, 0 };
         sws_scale(
-            sws_ctx_,
+            m_sws_ctx.get(),
             av_frame->data,
             av_frame->linesize,
             0,
@@ -82,132 +81,121 @@ void VideoRenderer::render_frame(void* frame) {
             dst_data,
             dst_linesize
         );
-        has_frame_ = true;
+        m_has_frame = true;
     }
 
     request_render();
 }
 
-void VideoRenderer::paint(void* hdc, int x, int y, int width, int height) {
-#ifdef _WIN32
-    HDC target = static_cast<HDC>(hdc);
-    if (!target || width <= 0 || height <= 0) {
+void VideoRenderer::paint(struct SDL_Renderer* renderer, int x, int y, int width, int height) {
+    if (!renderer || width <= 0 || height <= 0) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(frame_mutex_);
-    if (!has_frame_ || bgra_buffer_.empty() || frame_width_ <= 0 || frame_height_ <= 0) {
+    std::lock_guard<std::mutex> lock(m_frame_mutex);
+    if (!m_has_frame || m_bgra_buffer.empty() || m_frame_width <= 0 || m_frame_height <= 0) {
         return;
     }
 
-    int old_mode = SetStretchBltMode(target, HALFTONE);
-    POINT old_origin{};
-    SetBrushOrgEx(target, 0, 0, &old_origin);
+    const uint8_t* pixels = m_bgra_buffer.data();
+    int source_w = m_frame_width;
+    int source_h = m_frame_height;
 
-    const uint8_t* pixels = bgra_buffer_.data();
-    int source_w = frame_width_;
-    int source_h = frame_height_;
-
-    if (width != frame_width_ || height != frame_height_) {
-        if (width != scaled_width_ || height != scaled_height_) {
-            scaled_width_ = width;
-            scaled_height_ = height;
-            scaled_buffer_.assign(static_cast<size_t>(width) * height * 4, 0);
-            if (paint_sws_ctx_) {
-                sws_freeContext(paint_sws_ctx_);
-                paint_sws_ctx_ = nullptr;
+    if (width != m_frame_width || height != m_frame_height) {
+        if (width != m_scaled_width || height != m_scaled_height) {
+            m_scaled_width = width;
+            m_scaled_height = height;
+            m_scaled_buffer.assign(static_cast<size_t>(width) * height * 4, 0);
+            m_paint_sws_ctx.reset();
+            if (m_texture) {
+                SDL_DestroyTexture(m_texture);
+                m_texture = nullptr;
             }
         }
 
-        paint_sws_ctx_ = sws_getCachedContext(
-            paint_sws_ctx_,
-            frame_width_,
-            frame_height_,
+        double src_aspect = static_cast<double>(m_frame_width) / m_frame_height;
+        double dst_aspect = static_cast<double>(width) / height;
+
+        int target_w = width;
+        int target_h = height;
+
+        if (src_aspect > dst_aspect) {
+            target_h = static_cast<int>(width / src_aspect);
+        } else {
+            target_w = static_cast<int>(height * src_aspect);
+        }
+
+        int offset_x = (width - target_w) / 2;
+        int offset_y = (height - target_h) / 2;
+
+        m_paint_sws_ctx.reset(sws_getCachedContext(
+            m_paint_sws_ctx.release(),
+            m_frame_width,
+            m_frame_height,
             AV_PIX_FMT_BGRA,
-            width,
-            height,
+            target_w,
+            target_h,
             AV_PIX_FMT_BGRA,
             SWS_LANCZOS,
             nullptr,
             nullptr,
             nullptr
-        );
-        if (paint_sws_ctx_ && !scaled_buffer_.empty()) {
-            const uint8_t* src_data[4] = { bgra_buffer_.data(), nullptr, nullptr, nullptr };
-            int src_linesize[4] = { frame_width_ * 4, 0, 0, 0 };
-            uint8_t* dst_data[4] = { scaled_buffer_.data(), nullptr, nullptr, nullptr };
+        ));
+        if (m_paint_sws_ctx && !m_scaled_buffer.empty()) {
+            std::fill(m_scaled_buffer.begin(), m_scaled_buffer.end(), 0);
+            const uint8_t* src_data[4] = { m_bgra_buffer.data(), nullptr, nullptr, nullptr };
+            int src_linesize[4] = { m_frame_width * 4, 0, 0, 0 };
+            
+            uint8_t* dst_ptr = m_scaled_buffer.data() + (offset_y * width + offset_x) * 4;
+            uint8_t* dst_data[4] = { dst_ptr, nullptr, nullptr, nullptr };
             int dst_linesize[4] = { width * 4, 0, 0, 0 };
-            sws_scale(paint_sws_ctx_, src_data, src_linesize, 0, frame_height_, dst_data, dst_linesize);
-            pixels = scaled_buffer_.data();
+            
+            sws_scale(m_paint_sws_ctx.get(), src_data, src_linesize, 0, m_frame_height, dst_data, dst_linesize);
+            pixels = m_scaled_buffer.data();
             source_w = width;
             source_h = height;
         }
     }
 
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = source_w;
-    bmi.bmiHeader.biHeight = -source_h;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    StretchDIBits(
-        target,
-        x,
-        y,
-        width,
-        height,
-        0,
-        0,
-        source_w,
-        source_h,
-        pixels,
-        &bmi,
-        DIB_RGB_COLORS,
-        SRCCOPY
-    );
-    SetBrushOrgEx(target, old_origin.x, old_origin.y, nullptr);
-    SetStretchBltMode(target, old_mode);
-#else
-    (void)hdc;
-    (void)x;
-    (void)y;
-    (void)width;
-    (void)height;
-#endif
+    if (!m_texture && source_w > 0 && source_h > 0) {
+        m_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, source_w, source_h);
+    }
+    
+    if (m_texture) {
+        SDL_UpdateTexture(m_texture, nullptr, pixels, source_w * 4);
+        SDL_Rect dst_rect = { x, y, width, height };
+        SDL_RenderCopy(renderer, m_texture, nullptr, &dst_rect);
+    }
 }
 
 void VideoRenderer::update_viewport(int x, int y, int width, int height) {
-    viewport_x_ = x;
-    viewport_y_ = y;
-    viewport_width_ = width;
-    viewport_height_ = height;
+    m_viewport_x = x;
+    m_viewport_y = y;
+    m_viewport_width = width;
+    m_viewport_height = height;
 }
 
 void VideoRenderer::shutdown() {
-    std::lock_guard<std::mutex> lock(frame_mutex_);
-    if (sws_ctx_) {
-        sws_freeContext(sws_ctx_);
-        sws_ctx_ = nullptr;
+    std::lock_guard<std::mutex> lock(m_frame_mutex);
+    m_sws_ctx.reset();
+    m_paint_sws_ctx.reset();
+    if (m_texture) {
+        SDL_DestroyTexture(m_texture);
+        m_texture = nullptr;
     }
-    if (paint_sws_ctx_) {
-        sws_freeContext(paint_sws_ctx_);
-        paint_sws_ctx_ = nullptr;
-    }
-    bgra_buffer_.clear();
-    scaled_buffer_.clear();
-    frame_width_ = 0;
-    frame_height_ = 0;
-    scaled_width_ = 0;
-    scaled_height_ = 0;
-    has_frame_ = false;
-    native_window_handle_ = nullptr;
+    m_bgra_buffer.clear();
+    m_scaled_buffer.clear();
+    m_frame_width = 0;
+    m_frame_height = 0;
+    m_scaled_width = 0;
+    m_scaled_height = 0;
+    m_has_frame = false;
+    m_native_window_handle = nullptr;
 }
 
 void VideoRenderer::request_render() {
 #ifdef _WIN32
-    HWND hwnd = static_cast<HWND>(native_window_handle_);
+    HWND hwnd = static_cast<HWND>(m_native_window_handle);
     if (hwnd) {
         PostMessage(hwnd, WM_VIDEO_RENDER, 0, 0);
     }

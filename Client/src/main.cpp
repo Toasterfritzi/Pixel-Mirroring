@@ -274,65 +274,81 @@ bool run_first_time_setup(
 ) {
     clear_setup_state();
 
-    window.set_status_text("Pruefe USB-Verbindung...");
+    window.post_task([&window]() { window.set_status_text("Pruefe USB-Verbindung..."); });
     auto usb_device = wait_for_usb_authorization(adb, window, should_stop);
     if (!usb_device || should_stop) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("Kein USB-Geraet bereit. Bitte erneut verbinden.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("Kein USB-Geraet bereit. Bitte erneut verbinden.");
+        });
         return false;
     }
 
-    window.set_status_text("Android-App wird installiert...");
+    window.post_task([&window]() { window.set_status_text("Android-App wird installiert..."); });
     auto apk_path = find_android_apk();
     if (!apk_path) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("Android-App fehlt im PC-Paket.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("Android-App fehlt im PC-Paket.");
+        });
         return false;
     }
 
     if (!adb.install_app(usb_device->id, apk_path->string())) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("Android-App konnte nicht installiert werden.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("Android-App konnte nicht installiert werden.");
+        });
         return false;
     }
 
-    window.set_status_text("Berechtigungen werden gesetzt...");
+    window.post_task([&window]() { window.set_status_text("Berechtigungen werden gesetzt..."); });
     if (!adb.grant_secure_settings(usb_device->id)) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("WRITE_SECURE_SETTINGS konnte nicht gesetzt werden.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("WRITE_SECURE_SETTINGS konnte nicht gesetzt werden.");
+        });
         return false;
     }
 
-    window.set_status_text("Android-App wird gestartet...");
+    window.post_task([&window]() { window.set_status_text("Android-App wird gestartet..."); });
     adb.start_app(usb_device->id, ANDROID_PACKAGE);
     adb.start_service(usb_device->id, ANDROID_SERVICE);
 
     const std::string device_ip = adb.get_device_ip(usb_device->id);
     if (device_ip.empty()) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("Keine WLAN-IP gefunden. Bitte WLAN pruefen.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("Keine WLAN-IP gefunden. Bitte WLAN pruefen.");
+        });
         return false;
     }
 
-    window.set_status_text("ADB ueber WLAN wird aktiviert...");
+    window.post_task([&window]() { window.set_status_text("ADB ueber WLAN wird aktiviert..."); });
     if (!adb.enable_tcpip(usb_device->id, ADB_TCP_PORT)) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("WLAN-ADB konnte nicht aktiviert werden.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("WLAN-ADB konnte nicht aktiviert werden.");
+        });
         return false;
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
-    window.set_status_text("Verbinde mit " + device_ip + "...");
+    window.post_task([&window, device_ip]() { window.set_status_text("Verbinde mit " + device_ip + "..."); });
     if (!adb.connect_device(device_ip, ADB_TCP_PORT)) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("ADB-Verbindung per WLAN fehlgeschlagen.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("ADB-Verbindung per WLAN fehlgeschlagen.");
+        });
         return false;
     }
 
     auto tcp_device = wait_for_tcp_device(adb, device_ip, should_stop);
     if (!tcp_device || should_stop) {
-        window.set_app_state(pm::window::AppState::SETUP);
-        window.set_status_text("WLAN-ADB ist noch nicht bereit.");
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("WLAN-ADB ist noch nicht bereit.");
+        });
         return false;
     }
 
@@ -341,8 +357,10 @@ bool run_first_time_setup(
     setup_state.device_ip = device_ip;
     setup_state.device_name = usb_device->model.empty() ? "Android" : usb_device->model;
 
-    window.set_app_state(pm::window::AppState::CONNECTED);
-    window.set_status_text("Verbunden: " + device_ip);
+    window.post_task([&window, device_ip]() {
+        window.set_app_state(pm::window::AppState::CONNECTED);
+        window.set_status_text("Verbunden: " + device_ip);
+    });
     std::this_thread::sleep_for(std::chrono::seconds(1));
     if (!start_stream(window, scrcpy, renderer, input, tcp_device->id)) {
         clear_setup_state();
@@ -375,16 +393,22 @@ bool start_stream(
     pm::input::InputHandler& input,
     const std::string& device_id
 ) {
-    window.set_status_text("Starte Video-Stream...");
+    window.post_task([&window]() { window.set_status_text("Starte Video-Stream..."); });
     pm::stream::ScrcpyClient::Config config;
     config.device_id = device_id;
 
-    renderer.init(window.get_native_handle());
+    if (!renderer.init(window.get_native_handle())) {
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("Stream-Fehler: Renderer init fehlgeschlagen.");
+        });
+        return false;
+    }
     scrcpy.set_frame_callback([&](AVFrame* frame) {
         renderer.render_frame(frame);
     });
-    window.set_render_callback([&](void* hdc, int x, int y, int w, int h) {
-        renderer.paint(hdc, x, y, w, h);
+    window.set_render_callback([&](struct SDL_Renderer* renderer_ptr, int x, int y, int w, int h) {
+        renderer.paint(renderer_ptr, x, y, w, h);
     });
 
     if (!scrcpy.start(config)) {
@@ -393,10 +417,23 @@ bool start_stream(
         return false;
     }
 
-    input.set_device_size(scrcpy.video_width(), scrcpy.video_height());
-    window.set_aspect_ratio((double)scrcpy.video_width() / (double)scrcpy.video_height());
-    window.set_orientation(scrcpy.video_width() > scrcpy.video_height());
-    window.set_app_state(pm::window::AppState::STREAMING);
+    int w = scrcpy.video_width();
+    int h = scrcpy.video_height();
+    if (w <= 0 || h <= 0) {
+        window.post_task([&window]() {
+            window.set_app_state(pm::window::AppState::SETUP);
+            window.set_status_text("Stream-Fehler: Ungueltige Video-Dimensionen.");
+        });
+        scrcpy.stop();
+        return false;
+    }
+
+    input.set_device_size(w, h);
+    window.post_task([&window, w, h]() {
+        window.set_aspect_ratio((double)w / (double)h);
+        window.set_orientation(w > h);
+        window.set_app_state(pm::window::AppState::STREAMING);
+    });
     return true;
 }
 }
@@ -466,7 +503,7 @@ static int app_main() {
             pm::adb::AdbClient adb;
 
             // Ugg wake ADB first. No pretend network magic.
-            window->set_status_text("ADB wird gestartet...");
+            window->post_task([w = window.get()]() { w->set_status_text("ADB wird gestartet..."); });
             adb.init();
 
             SetupState setup_state = load_setup_state();
@@ -484,19 +521,26 @@ static int app_main() {
                 should_stop
             );
             if (!tcp_device || should_stop) {
-                window->set_app_state(pm::window::AppState::SETUP);
-                window->set_status_text(automatic
-                    ? "Geraet nicht erreichbar. Verbinden fuer erneuten Versuch."
-                    : "Geraet nicht erreichbar. USB nur fuer Neueinrichtung.");
+                window->post_task([w = window.get(), automatic]() {
+                    w->set_app_state(pm::window::AppState::SETUP);
+                    w->set_status_text(automatic
+                        ? "Geraet nicht erreichbar. Verbinden fuer erneuten Versuch."
+                        : "Geraet nicht erreichbar. USB nur fuer Neueinrichtung.");
+                });
                 return;
             }
 
-            window->set_app_state(pm::window::AppState::CONNECTED);
-            window->set_status_text(setup_state.device_name.empty() ? "Verbunden" : setup_state.device_name);
+            std::string name = setup_state.device_name;
+            window->post_task([w = window.get(), name]() {
+                w->set_app_state(pm::window::AppState::CONNECTED);
+                w->set_status_text(name.empty() ? "Verbunden" : name);
+            });
             std::this_thread::sleep_for(std::chrono::seconds(1));
             if (!start_stream(*window, scrcpy, renderer, input, tcp_device->id) && !should_stop) {
-                window->set_app_state(pm::window::AppState::SETUP);
-                window->set_status_text("Stream fehlgeschlagen.");
+                window->post_task([w = window.get()]() {
+                    w->set_app_state(pm::window::AppState::SETUP);
+                    w->set_status_text("Stream fehlgeschlagen.");
+                });
             }
         });
     };
