@@ -2,8 +2,13 @@
 .gradle/
 build/
 Android/.gradle/
+Android/.gradle-home/
+Android/.kotlin/
+Android/.idea/
 Android/build/
 Android/app/build/
+Android/app/.cxx/
+Android/app/.externalNativeBuild/
 Android/gradle/
 Android/gradlew
 Android/gradlew.bat
@@ -22,9 +27,15 @@ local.properties
 Client/build/
 Client/PreviewWindow.exe
 *.obj
-*.exe
 *.pdb
 *.bin
+
+# Bundled Android tooling downloaded for local builds
+Client/vendor/platform-tools/
+
+# ADB platform-tools (downloaded, not committed)
+scrcpy_download/adb.exe
+scrcpy_download/*.dll
 
 # Java / Android debug artifacts
 *.hprof

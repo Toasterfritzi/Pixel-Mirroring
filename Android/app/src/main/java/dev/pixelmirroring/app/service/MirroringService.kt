@@ -10,21 +10,10 @@ import dev.pixelmirroring.app.network.ConnectRequest
 import dev.pixelmirroring.app.network.ConnectResponse
 import dev.pixelmirroring.app.network.NetworkScanner
 import dev.pixelmirroring.app.network.StatusResponse
-import io.ktor.http.HttpStatusCode
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.call
-import io.ktor.server.application.install
-import io.ktor.server.engine.ApplicationEngine
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.request.receive
-import io.ktor.server.response.respond
-import io.ktor.server.response.respondText
-import io.ktor.server.routing.get
-import io.ktor.server.routing.post
-import io.ktor.server.routing.routing
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
 
 class MirroringService : Service() {
     companion object {
@@ -32,75 +21,163 @@ class MirroringService : Service() {
         private const val TAG = "MirroringService"
     }
 
-    private var server: ApplicationEngine? = null
+    private val json = Json { ignoreUnknownKeys = true }
+    private var server: DiscoveryHttpServer? = null
     private val adbWifiManager by lazy { AdbWifiManager(this) }
     private val clientStore by lazy { PairedClientStore(this) }
+    private val pairingMutex = Mutex()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "Starting MirroringService")
-        startForeground(NOTIFICATION_ID, NotificationHelper.createNotification(this))
-        startKtorServer()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                NotificationHelper.createNotification(this),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, NotificationHelper.createNotification(this))
+        }
+        startDiscoveryServer()
         return START_STICKY
     }
 
-    private fun startKtorServer() {
+    private fun startDiscoveryServer() {
         if (server != null) return
 
-        server = embeddedServer(Netty, port = 18294) {
-            install(ContentNegotiation) {
-                json()
-            }
-            routing {
-                get("/ping") {
-                    call.respondText("pong")
+        var retryCount = 0
+        while (retryCount < 5) {
+            try {
+                server = DiscoveryHttpServer(port = 18294, requestHandler = ::handleRequest).also {
+                    it.start()
                 }
-                
-                post("/connect") {
-                    val request = call.receive<ConnectRequest>()
-                    
-                    val isAuthorized = runBlocking { clientStore.isClientPaired(request.clientId) }
-                    
-                    if (!isAuthorized) {
-                        call.respond(HttpStatusCode.Forbidden)
-                        return@post
+                Log.i(TAG, "Discovery server started on port 18294")
+                break
+            } catch (e: Exception) {
+                retryCount++
+                Log.e(TAG, "Failed to start discovery server on port 18294. Retry $retryCount/5", e)
+                server?.close()
+                server = null
+                if (retryCount >= 5) {
+                    server = null
+                } else {
+                    try {
+                        Thread.sleep(2000)
+                    } catch (ie: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        Log.w(TAG, "Thread interrupted during server start retry", ie)
                     }
-                    
-                    // Auto-pair if no one is paired yet
-                    runBlocking { 
-                        if (clientStore.getPairedClient() == null) {
-                            clientStore.savePairedClient(request.clientId, request.clientName)
-                        }
-                    }
+                }
+            }
+        }
+    }
 
-                    // Activate ADB WiFi
-                    val success = adbWifiManager.enableAdbWifi() && adbWifiManager.enableAdbTcpIp()
-                    
-                    val ips = NetworkScanner.getAllLocalIps(this@MirroringService)
-                    
-                    call.respond(ConnectResponse(
-                        success = success,
-                        ips = ips,
-                        adbPort = 5555,
-                        deviceName = Build.MODEL
-                    ))
-                }
-                
-                get("/status") {
-                    call.respond(StatusResponse(
-                        adbWifiEnabled = adbWifiManager.isAdbWifiEnabled(),
-                        hasPermission = adbWifiManager.hasSecureSettingsPermission(),
-                        deviceName = Build.MODEL
-                    ))
-                }
+    private fun handleRequest(request: HttpRequest): HttpResponse {
+        return try {
+            when {
+            request.method == "GET" && request.path == "/ping" -> {
+                HttpResponse(
+                    statusCode = 200,
+                    contentType = "text/plain; charset=utf-8",
+                    body = "pong"
+                )
             }
-        }.start(wait = false)
-        Log.i(TAG, "Ktor Server started on port 18294")
+
+            request.method == "GET" && request.path == "/status" -> {
+                val response = StatusResponse(
+                    adbWifiEnabled = adbWifiManager.isAdbWifiEnabled(),
+                    hasPermission = adbWifiManager.hasSecureSettingsPermission(),
+                    deviceName = Build.MODEL
+                )
+                jsonResponse(response)
+            }
+
+            request.method == "POST" && request.path == "/connect" -> {
+                val connectRequest = json.decodeFromString<ConnectRequest>(request.body)
+
+                val isAuthorized = runBlocking {
+                    pairingMutex.withLock {
+                        val alreadyAuthorized = clientStore.isClientPaired(connectRequest.clientId)
+                        if (alreadyAuthorized && clientStore.getPairedClient() == null) {
+                            // Ugg first friend gets paired.
+                            clientStore.savePairedClient(connectRequest.clientId, connectRequest.clientName)
+                        }
+                        alreadyAuthorized
+                    }
+                }
+
+                if (!isAuthorized) {
+                    return HttpResponse(
+                        statusCode = 403,
+                        contentType = "text/plain; charset=utf-8",
+                        body = ""
+                    )
+                }
+
+                var adbPort = (5555..5595).random()
+                val success = runBlocking {
+                    val ok = adbWifiManager.enableAdbWifi() && adbWifiManager.enableAdbTcpIp(adbPort)
+                    val dynamicPort = adbWifiManager.getDynamicAdbPort()
+                    if (dynamicPort != -1) {
+                        adbPort = dynamicPort
+                    }
+                    ok
+                }
+
+                val response = ConnectResponse(
+                    success = success,
+                    ips = NetworkScanner.getAllLocalIps(this),
+                    adbPort = adbPort,
+                    deviceName = Build.MODEL
+                )
+                jsonResponse(response)
+            }
+
+            request.path == "/ping" || request.path == "/status" || request.path == "/connect" -> {
+                HttpResponse(
+                    statusCode = 405,
+                    contentType = "text/plain; charset=utf-8",
+                    body = "method not allowed"
+                )
+            }
+
+            else -> {
+                HttpResponse(
+                    statusCode = 404,
+                    contentType = "text/plain; charset=utf-8",
+                    body = "not found"
+                )
+            }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Failed to handle request ${request.method} ${request.path}", e)
+        HttpResponse(
+            statusCode = 400,
+            contentType = "text/plain; charset=utf-8",
+            body = "bad request"
+        )
+    }
+}
+
+    private fun jsonResponse(payload: Any): HttpResponse {
+        val body = when (payload) {
+            is ConnectResponse -> json.encodeToString(ConnectResponse.serializer(), payload)
+            is StatusResponse -> json.encodeToString(StatusResponse.serializer(), payload)
+            else -> error("Unsupported payload")
+        }
+
+        return HttpResponse(
+            statusCode = 200,
+            contentType = "application/json; charset=utf-8",
+            body = body
+        )
     }
 
     override fun onDestroy() {
-        server?.stop(1000, 2000)
+        server?.close()
+        server = null
         super.onDestroy()
     }
 }

@@ -142,10 +142,17 @@ namespace PixelMirroringPreview
                 path.AddRectangle(bounds);
                 return path;
             }
-            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
-            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
-            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
-            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+            
+            // Adjust bounds slightly to prevent region clipping the right/bottom edge
+            int x = bounds.X;
+            int y = bounds.Y;
+            int w = bounds.Width;
+            int h = bounds.Height;
+            
+            path.AddArc(x, y, d, d, 180, 90);
+            path.AddArc(x + w - d, y, d, d, 270, 90);
+            path.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+            path.AddArc(x, y + h - d, d, d, 90, 90);
             path.CloseFigure();
             return path;
         }
@@ -286,25 +293,31 @@ namespace PixelMirroringPreview
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
             // ---- Phone Screen ----
+            Rectangle drawPhone = rectPhone;
+            drawPhone.Inflate(-1, -1); // Prevent border clipping
+            
             using (SolidBrush phoneBrush = new SolidBrush(Color.FromArgb(22, 22, 22)))
-            using (GraphicsPath phonePath = RoundedRect(rectPhone, PHONE_CORNER_RADIUS))
+            using (GraphicsPath phonePath = RoundedRect(drawPhone, PHONE_CORNER_RADIUS))
             {
                 g.FillPath(phoneBrush, phonePath);
             }
             using (Pen borderPen = new Pen(Color.FromArgb(65, 65, 65), 1.5f))
-            using (GraphicsPath phonePath = RoundedRect(rectPhone, PHONE_CORNER_RADIUS))
+            using (GraphicsPath phonePath = RoundedRect(drawPhone, PHONE_CORNER_RADIUS))
             {
                 g.DrawPath(borderPen, phonePath);
             }
 
             // ---- Bubble background ----
+            Rectangle drawBubble = rectBubble;
+            drawBubble.Inflate(-1, -1);
+            
             using (SolidBrush bubbleBrush = new SolidBrush(Color.FromArgb(50, 50, 50)))
-            using (GraphicsPath bubblePath = RoundedRect(rectBubble, BUBBLE_CORNER_RADIUS))
+            using (GraphicsPath bubblePath = RoundedRect(drawBubble, BUBBLE_CORNER_RADIUS))
             {
                 g.FillPath(bubbleBrush, bubblePath);
             }
-            using (Pen bubbleBorder = new Pen(Color.FromArgb(75, 75, 75), 1f))
-            using (GraphicsPath bubblePath = RoundedRect(rectBubble, BUBBLE_CORNER_RADIUS))
+            using (Pen bubbleBorder = new Pen(Color.FromArgb(75, 75, 75), 1.5f))
+            using (GraphicsPath bubblePath = RoundedRect(drawBubble, BUBBLE_CORNER_RADIUS))
             {
                 g.DrawPath(bubbleBorder, bubblePath);
             }
@@ -459,9 +472,13 @@ namespace PixelMirroringPreview
             base.WndProc(ref m);
         }
 
+        [DllImport("user32.dll")]
+        private static extern bool SetProcessDPIAware();
+
         [STAThread]
         public static void Main()
         {
+            if (Environment.OSVersion.Version.Major >= 6) SetProcessDPIAware();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new CustomWindow());

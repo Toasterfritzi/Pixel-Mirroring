@@ -12,6 +12,8 @@
 #define SOCKET int
 #endif
 
+#include "video_decoder.h"
+
 // Forward declarations for FFmpeg/SDL (they will be included in the .cpp files)
 struct AVFrame;
 
@@ -26,6 +28,7 @@ public:
         int max_fps = 60;
         bool audio = false; 
         bool control = true;
+        bool tunnel_forward = false;
     };
 
     ScrcpyClient();
@@ -71,6 +74,10 @@ private:
     uint32_t video_codec_id_{0};
     uint32_t initial_width_{0};
     uint32_t initial_height_{0};
+    
+    int local_port_{27183};
+    
+    VideoDecoder decoder_;
 };
 
 } // namespace pm::stream
