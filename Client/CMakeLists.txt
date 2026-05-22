@@ -178,3 +178,71 @@ elseif(APPLE)
     find_library(APPKIT_FRAMEWORK AppKit)
     target_link_libraries(PixelMirroring PRIVATE ${COCOA_FRAMEWORK} ${APPKIT_FRAMEWORK})
 endif()
+
+# --- Installation and Packaging ---
+# Install the main executable
+install(TARGETS PixelMirroring
+    RUNTIME DESTINATION .
+)
+
+# Install dependent runtime DLLs (SDL, FFmpeg, vcpkg dependencies)
+install(FILES $<TARGET_RUNTIME_DLLS:PixelMirroring>
+    DESTINATION .
+)
+
+# Install companion Android APK from build target dir if it exists
+install(FILES "$<TARGET_FILE_DIR:PixelMirroring>/PixelMirroring.apk"
+    DESTINATION .
+    OPTIONAL
+)
+
+# Install scrcpy-server.jar from build target dir if it exists
+install(FILES "$<TARGET_FILE_DIR:PixelMirroring>/scrcpy-server.jar"
+    DESTINATION .
+    OPTIONAL
+)
+
+# Install ADB runtime files
+if(WIN32)
+    foreach(PM_ADB_RUNTIME_FILE IN LISTS PM_ADB_RUNTIME_FILES)
+        install(FILES "$<TARGET_FILE_DIR:PixelMirroring>/${PM_ADB_RUNTIME_FILE}"
+            DESTINATION .
+            OPTIONAL
+        )
+    endforeach()
+else()
+    install(PROGRAMS "$<TARGET_FILE_DIR:PixelMirroring>/adb"
+        DESTINATION .
+        OPTIONAL
+    )
+endif()
+
+# --- CPack Packaging Setup ---
+set(CPACK_PACKAGE_NAME "PixelMirroring")
+set(CPACK_PACKAGE_VENDOR "PixelMirroring Team")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Android Screen Mirroring Tool - Apple iPhone Mirroring for Android")
+set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP;NSIS;WIX")
+    
+    # Executables to create shortcuts for
+    set(CPACK_PACKAGE_EXECUTABLES "PixelMirroring" "Pixel Mirroring")
+    
+    # NSIS specific settings
+    set(CPACK_NSIS_PACKAGE_NAME "Pixel Mirroring")
+    set(CPACK_NSIS_DISPLAY_NAME "Pixel Mirroring")
+    set(CPACK_NSIS_HELP_LINK "https://github.com/Toasterfritzi/Pixel-Mirroring")
+    set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/Toasterfritzi/Pixel-Mirroring")
+    set(CPACK_NSIS_MODIFY_PATH ON)
+    
+    # WiX specific settings (Official Windows Installer)
+    set(CPACK_WIX_UPGRADE_GUID "D9F369E9-1A1A-4BE6-B6DF-D7E31BEF8CFD")
+    set(CPACK_WIX_PROGRAM_MENU_FOLDER "Pixel Mirroring")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+
+include(CPack)

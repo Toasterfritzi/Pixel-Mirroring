@@ -1,0 +1,115 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Build Android App
+        run: gradle assembleDebug
+        working-directory: Android
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: Android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows Client & Installers
+    runs-on: windows-latest
+    needs: build-android
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/Client/vcpkg_cache
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: Android/app/build/outputs/apk/debug
+
+      - name: Set up MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Create vcpkg cache directory
+        run: mkdir -p Client/vcpkg_cache
+        shell: bash
+
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: Client/vcpkg_cache
+          key: ${{ runner.os }}-vcpkg-bin-${{ hashFiles('Client/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-bin-
+
+      - name: Bootstrap vcpkg
+        run: ./Client/vcpkg/bootstrap-vcpkg.bat
+        shell: cmd
+
+      - name: Configure CMake
+        run: cmake --preset default -DCMAKE_BUILD_TYPE=Release
+        working-directory: Client
+
+      - name: Build Client
+        run: cmake --build build
+        working-directory: Client
+
+      - name: Run CPack Packaging
+        run: |
+          cd build
+          cpack -C Release
+        working-directory: Client
+        shell: bash
+
+      - name: Upload Installers as Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PixelMirroring-Installers
+          path: |
+            Client/build/PixelMirroring-*.zip
+            Client/build/PixelMirroring-*.exe
+            Client/build/PixelMirroring-*.msi
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            Client/build/PixelMirroring-*.zip
+            Client/build/PixelMirroring-*.exe
+            Client/build/PixelMirroring-*.msi
+          draft: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
