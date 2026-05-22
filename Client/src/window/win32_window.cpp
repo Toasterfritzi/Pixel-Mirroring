@@ -2,6 +2,8 @@
 #include "win32_window.h"
 #include <windowsx.h>
 #include <algorithm>
+#include <SDL2/SDL.h>
+#include <dwmapi.h>
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -14,6 +16,7 @@ namespace {
     const int BUBBLE_H = 36;
     const int BUBBLE_GAP = 6;
     const int MIN_PHONE_W = 140;
+    const UINT WM_VIDEO_RENDER = WM_APP + 2;
     const wchar_t* ICON_DRAG = L"\uE700";
     const wchar_t* ICON_MINIMIZE = L"\uE921";
     const wchar_t* ICON_MAXIMIZE = L"\uE922";
@@ -39,17 +42,29 @@ std::unique_ptr<IWindow> create_window(int w, int h, const std::string& t) {
 Win32Window::Win32Window(int w, int h, const std::string& t) : width_(w), height_(h), title_(t) {}
 
 Win32Window::~Win32Window() {
+    if (m_sdl_renderer) SDL_DestroyRenderer(m_sdl_renderer);
+    if (m_sdl_window) SDL_DestroyWindow(m_sdl_window);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
     if (icon_font_) DeleteObject(icon_font_);
+    // Cave man destroy child window before parent
+    if (hwnd_child_) DestroyWindow(hwnd_child_);
     if (hwnd_) DestroyWindow(hwnd_);
 }
 
-void Win32Window::set_app_state(AppState s) { app_state_ = s; if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE); }
+void Win32Window::set_app_state(AppState s) {
+    app_state_ = s;
+    // Cave man toggle child window visibility based on streaming state
+    if (hwnd_child_) {
+        ShowWindow(hwnd_child_, s == AppState::STREAMING ? SW_SHOW : SW_HIDE);
+    }
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+}
 void Win32Window::set_status_text(const std::string& t) { status_text_ = t; if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE); }
 
 bool Win32Window::create() {
     HINSTANCE hi = GetModuleHandle(nullptr);
     WNDCLASSEXA wc = {sizeof(wc)};
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
     wc.lpfnWndProc = Win32Window::window_proc;
     wc.hInstance = hi;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -57,15 +72,44 @@ bool Win32Window::create() {
     wc.lpszClassName = "PixelMirroringWindowClass";
     RegisterClassExA(&wc);
 
-    DWORD style = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX;
+    DWORD style = WS_POPUP | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
     int th = height_ + BUBBLE_H + BUBBLE_GAP;
     hwnd_ = CreateWindowExA(0, wc.lpszClassName, title_.c_str(), style,
         CW_USEDEFAULT, CW_USEDEFAULT, width_, th, nullptr, nullptr, hi, this);
     if (!hwnd_) return false;
 
+    // MEOW. REMOVE WINDOW 11 BORDER AND CORNER ARTIFACTS.
+    COLORREF border_color = 0xFFFFFFFE; // DWM_COLOR_DONT_DRAW
+    DwmSetWindowAttribute(hwnd_, 34, &border_color, sizeof(border_color)); // 34 = DWMWA_BORDER_COLOR
+    DWORD corner_preference = 1; // DWMWCP_DONOTROUND
+    DwmSetWindowAttribute(hwnd_, 33, &corner_preference, sizeof(corner_preference)); // 33 = DWMWA_WINDOW_CORNER_PREFERENCE
+
+    // Cave man register child window class
+    WNDCLASSEXA child_wc = {sizeof(child_wc)};
+    child_wc.style = CS_HREDRAW | CS_VREDRAW;
+    child_wc.lpfnWndProc = DefWindowProcA;
+    child_wc.hInstance = hi;
+    child_wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    child_wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    child_wc.lpszClassName = "PixelMirroringChildWindowClass";
+    RegisterClassExA(&child_wc);
+
+    // Cave man create child window for SDL video, ignore input so it fall through to parent
+    hwnd_child_ = CreateWindowExA(0, child_wc.lpszClassName, nullptr,
+        WS_CHILD | WS_DISABLED | WS_CLIPSIBLINGS,
+        0, 0, 0, 0,
+        hwnd_, nullptr, hi, nullptr);
+
     icon_font_ = CreateFontW(14, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+
+    SDL_Init(SDL_INIT_VIDEO);
+    // Cave man bind SDL to child window, no draw over main window buttons!
+    m_sdl_window = SDL_CreateWindowFrom(hwnd_child_);
+    if (m_sdl_window) {
+        m_sdl_renderer = SDL_CreateRenderer(m_sdl_window, -1, SDL_RENDERER_ACCELERATED);
+    }
 
     recalc_layout();
     update_region();
@@ -80,8 +124,30 @@ void Win32Window::process_messages() {
     while (GetMessage(&msg, nullptr, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
 }
 
-void Win32Window::set_aspect_ratio(double r) { aspect_ratio_ = r; }
+void Win32Window::set_aspect_ratio(double r) {
+    aspect_ratio_ = r;
+    if (!hwnd_ || r <= 0.0) return;
+
+    RECT cr; GetClientRect(hwnd_, &cr);
+    RECT wr; GetWindowRect(hwnd_, &wr);
+    int phone_h = cr.bottom - cr.top - BUBBLE_H - BUBBLE_GAP;
+    if (phone_h <= 0) return;
+
+    int target_client_w = (std::max)(MIN_PHONE_W, (int)(phone_h * r + 0.5));
+    int frame_extra_w = (wr.right - wr.left) - (cr.right - cr.left);
+    int target_window_w = target_client_w + frame_extra_w;
+    int window_h = wr.bottom - wr.top;
+    int center_x = (wr.left + wr.right) / 2;
+
+    SetWindowPos(hwnd_, nullptr, center_x - target_window_w / 2, wr.top,
+        target_window_w, window_h, SWP_NOZORDER | SWP_NOACTIVATE);
+}
 void Win32Window::set_orientation(bool l) { is_landscape_ = l; is_max_height_ = false; }
+
+void Win32Window::set_video_viewport_callback(std::function<void(int, int, int, int)> cb) {
+    m_viewport_cb_ = std::move(cb);
+    notify_video_viewport();
+}
 
 void Win32Window::recalc_layout() {
     if (!hwnd_) return;
@@ -107,6 +173,21 @@ void Win32Window::recalc_layout() {
     int px = (rect_phone_.left + rect_phone_.right) / 2;
     int py = rect_phone_.top + (rect_phone_.bottom - rect_phone_.top) * 2 / 3;
     rect_start_btn_ = {px - sbw/2, py - sbh/2, px + sbw/2, py + sbh/2};
+
+    // Cave man position child window to phone rect
+    if (hwnd_child_) {
+        int child_w = rect_phone_.right - rect_phone_.left;
+        int child_h = rect_phone_.bottom - rect_phone_.top;
+        SetWindowPos(hwnd_child_, nullptr, rect_phone_.left, rect_phone_.top,
+            child_w, child_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        // Cave man tell SDL window has new size, so backbuffer resize too!
+        if (m_sdl_window) {
+            SDL_SetWindowSize(m_sdl_window, child_w, child_h);
+        }
+    }
+
+    notify_video_viewport();
 }
 
 void Win32Window::update_region() {
@@ -122,6 +203,28 @@ void Win32Window::update_region() {
     CombineRgn(c, br, pr, RGN_OR);
     SetWindowRgn(hwnd_, c, TRUE);
     DeleteObject(br); DeleteObject(pr);
+}
+
+void Win32Window::notify_video_viewport() {
+    if (!m_viewport_cb_) return;
+
+    int w = rect_phone_.right - rect_phone_.left;
+    int h = rect_phone_.bottom - rect_phone_.top;
+    if (w <= 0 || h <= 0) return;
+
+    m_viewport_cb_(rect_phone_.left, rect_phone_.top, w, h);
+}
+
+void Win32Window::send_pointer_event(PointerAction action, int x, int y) {
+    if (!m_pointer_cb_ || app_state_ != AppState::STREAMING) return;
+
+    int w = rect_phone_.right - rect_phone_.left;
+    int h = rect_phone_.bottom - rect_phone_.top;
+    if (w <= 0 || h <= 0) return;
+
+    x = (std::max)(0, (std::min)(x, w - 1));
+    y = (std::max)(0, (std::min)(y, h - 1));
+    m_pointer_cb_(action, x, y, w, h);
 }
 
 int Win32Window::hit_test_button(POINT pt) {
@@ -257,7 +360,9 @@ void Win32Window::handle_paint() {
         }
     }
 
+    // Cave man no need ExcludeClipRect anymore, WS_CLIPCHILDREN handle child clipping
     BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+
     SelectObject(mem, old);
     DeleteObject(bmp);
     DeleteDC(mem);
@@ -366,9 +471,7 @@ void Win32Window::draw_connected_screen(Gdiplus::Graphics& g) {
 }
 
 void Win32Window::draw_streaming_screen(Gdiplus::Graphics& g) {
-    if (render_cb_) {
-        render_cb_();
-    } else {
+    if (!m_render_cb_) {
         Gdiplus::StringFormat sf;
         sf.SetAlignment(Gdiplus::StringAlignmentCenter);
         sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
@@ -404,21 +507,42 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == TRUE) return 0;
         break;
     case WM_TIMER:
-        if (wp == 1) InvalidateRect(hwnd_, &rect_phone_, FALSE);
+        if (wp == 1 && app_state_ != AppState::STREAMING) InvalidateRect(hwnd_, &rect_phone_, FALSE);
         return 0;
     case WM_SIZE:
-        if (wp != SIZE_MINIMIZED) { recalc_layout(); update_region(); }
+        if (wp != SIZE_MINIMIZED) {
+            recalc_layout();
+            update_region();
+            // Cave man trigger render now so live resize look smooth
+            PostMessage(hwnd_, WM_VIDEO_RENDER, 0, 0);
+        }
         return 0;
     case WM_SIZING:
         handle_sizing(wp, lp); return TRUE;
     case WM_NCHITTEST:
         return handle_nchittest({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+    case WM_NCRBUTTONUP: {
+        if (wp == HTCAPTION) {
+            POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            POINT client_pt = pt;
+            ScreenToClient(hwnd_, &client_pt);
+            if (hit_test_button(client_pt) == 0) {  // 0 = drag button
+                show_context_menu(client_pt);
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_LBUTTONDOWN: {
         POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
         int btn = hit_test_button(pt);
         if (btn == 1) ShowWindow(hwnd_, SW_MINIMIZE);
         else if (btn == 2) toggle_max_height();
         else if (btn == 3) PostMessage(hwnd_, WM_CLOSE, 0, 0);
+        else if (app_state_ == AppState::STREAMING && PtInRect(&rect_phone_, pt)) {
+            SetCapture(hwnd_);
+            send_pointer_event(PointerAction::DOWN, pt.x - rect_phone_.left, pt.y - rect_phone_.top);
+        }
         else if (is_start_button_hit(pt) && start_cb_) {
             // Visual feedback — immediately change state
             app_state_ = AppState::SCANNING;
@@ -435,6 +559,10 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_MOUSEMOVE: {
         POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        if (app_state_ == AppState::STREAMING && (wp & MK_LBUTTON) != 0 && GetCapture() == hwnd_) {
+            send_pointer_event(PointerAction::MOVE, pt.x - rect_phone_.left, pt.y - rect_phone_.top);
+            return 0;
+        }
         int nh = hit_test_button(pt);
         bool sbh = is_start_button_hit(pt);
         if (nh != hovered_button_ || sbh != start_button_hovered_) {
@@ -446,12 +574,41 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    case WM_LBUTTONUP: {
+        POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        if (app_state_ == AppState::STREAMING && GetCapture() == hwnd_) {
+            send_pointer_event(PointerAction::UP, pt.x - rect_phone_.left, pt.y - rect_phone_.top);
+            ReleaseCapture();
+        }
+        return 0;
+    }
     case WM_MOUSELEAVE:
         if (hovered_button_ != -1 || start_button_hovered_) {
             hovered_button_ = -1; start_button_hovered_ = false;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
+    case WM_VIDEO_RENDER:
+        // Cave man render direct on child window — coordinates relative to child!
+        if (app_state_ == AppState::STREAMING && m_render_cb_ && m_sdl_renderer) {
+            int w = rect_phone_.right - rect_phone_.left;
+            int h = rect_phone_.bottom - rect_phone_.top;
+            if (w > 0 && h > 0) {
+                SDL_RenderClear(m_sdl_renderer);
+                m_render_cb_(m_sdl_renderer, 0, 0, w, h);
+                SDL_RenderPresent(m_sdl_renderer);
+            }
+        }
+        return 0;
+    case WM_APP + 3: {
+        // Cave man run task on UI thread
+        auto* task = reinterpret_cast<std::function<void()>*>(lp);
+        if (task) {
+            (*task)();
+            delete task;
+        }
+        return 0;
+    }
     case WM_DESTROY: PostQuitMessage(0); return 0;
     case WM_PAINT: handle_paint(); return 0;
     case WM_ERASEBKGND: return 1;
@@ -501,6 +658,46 @@ void Win32Window::handle_sizing(WPARAM edge, LPARAM lp) {
     case WMSZ_TOPLEFT:
         r->left = r->right - ntw; r->top = r->bottom - nth; break;
     }
+}
+
+void Win32Window::post_task(std::function<void()> task) {
+    if (!hwnd_) return;
+    // Cave man allocate task on heap, UI thread delete after run
+    auto* heap_task = new std::function<void()>(std::move(task));
+    PostMessage(hwnd_, WM_APP + 3, 0, reinterpret_cast<LPARAM>(heap_task));
+}
+
+void Win32Window::show_context_menu(POINT pt) {
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+
+    // MEOW. MENU IDs. SIMPLE.
+    constexpr UINT ID_FACTORY_RESET = 1001;
+    constexpr UINT ID_TOGGLE_FPS    = 1002;
+    constexpr UINT ID_TOGGLE_RES    = 1003;
+
+    AppendMenuW(menu, MF_STRING, ID_TOGGLE_FPS,
+        fps_limited_ ? L"\u2713  FPS begrenzen (30)" : L"    FPS begrenzen (30)");
+    AppendMenuW(menu, MF_STRING, ID_TOGGLE_RES,
+        resolution_limited_ ? L"\u2713  Aufloesung begrenzen (720p)" : L"    Aufloesung begrenzen (720p)");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, ID_FACTORY_RESET, L"    Werkseinstellungen zuruecksetzen");
+
+    ClientToScreen(hwnd_, &pt);
+    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        pt.x, pt.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+
+    if (cmd == 0) return;  // User dismissed menu
+
+    MenuAction action;
+    switch (cmd) {
+        case ID_FACTORY_RESET: action = MenuAction::FACTORY_RESET; break;
+        case ID_TOGGLE_FPS:    action = MenuAction::TOGGLE_FPS_LIMIT; break;
+        case ID_TOGGLE_RES:    action = MenuAction::TOGGLE_RESOLUTION_LIMIT; break;
+        default: return;
+    }
+    if (menu_cb_) menu_cb_(action);
 }
 
 } // namespace pm::window

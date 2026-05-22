@@ -9,6 +9,9 @@
 #include <functional>
 #include "window_interface.h"
 
+struct SDL_Renderer;
+struct SDL_Window;
+
 namespace pm::window {
 
 class Win32Window : public IWindow {
@@ -24,10 +27,17 @@ public:
     void set_orientation(bool landscape) override;
     
     void* get_native_handle() override { return hwnd_; }
-    void set_render_callback(std::function<void()> cb) override { render_cb_ = std::move(cb); }
+    void set_render_callback(std::function<void(SDL_Renderer*, int, int, int, int)> cb) override { m_render_cb_ = std::move(cb); }
+    void set_video_viewport_callback(std::function<void(int, int, int, int)> cb) override;
+    void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) override { m_pointer_cb_ = std::move(cb); }
     void set_app_state(AppState state) override;
     void set_status_text(const std::string& text) override;
     void set_start_callback(std::function<void()> cb) override { start_cb_ = std::move(cb); }
+    void post_task(std::function<void()> task) override;
+    
+    void set_menu_callback(std::function<void(MenuAction)> cb) override { menu_cb_ = std::move(cb); }
+    void set_fps_limited(bool limited) override { fps_limited_ = limited; }
+    void set_resolution_limited(bool limited) override { resolution_limited_ = limited; }
 
 private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -46,10 +56,16 @@ private:
     void toggle_max_height();
     void recalc_layout();
     void update_region();
+    void notify_video_viewport();
+    void send_pointer_event(PointerAction action, int x, int y);
     int hit_test_button(POINT client_pt);
     bool is_start_button_hit(POINT client_pt);
+    void show_context_menu(POINT pt);
 
     HWND hwnd_{nullptr};
+    HWND hwnd_child_{nullptr};
+    SDL_Window* m_sdl_window{nullptr};
+    SDL_Renderer* m_sdl_renderer{nullptr};
     HFONT icon_font_{nullptr};
     int width_;
     int height_;
@@ -74,8 +90,13 @@ private:
     int scan_animation_frame_{0};
     
     // Callbacks
-    std::function<void()> render_cb_;
+    std::function<void(SDL_Renderer*, int, int, int, int)> m_render_cb_;
+    std::function<void(int, int, int, int)> m_viewport_cb_;
+    std::function<void(PointerAction, int, int, int, int)> m_pointer_cb_;
     std::function<void()> start_cb_;
+    std::function<void(MenuAction)> menu_cb_;
+    bool fps_limited_{false};
+    bool resolution_limited_{false};
 };
 
 } // namespace pm::window
