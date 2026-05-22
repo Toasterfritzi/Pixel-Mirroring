@@ -84,6 +84,9 @@ jobs:
         run: cmake --build build
         working-directory: Client
 
+      - name: Install NSIS
+        run: choco install nsis -y
+
       - name: Run CPack Packaging
         run: |
           cd build
