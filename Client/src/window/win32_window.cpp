@@ -176,9 +176,15 @@ void Win32Window::recalc_layout() {
 
     // Cave man position child window to phone rect
     if (hwnd_child_) {
+        int child_w = rect_phone_.right - rect_phone_.left;
+        int child_h = rect_phone_.bottom - rect_phone_.top;
         SetWindowPos(hwnd_child_, nullptr, rect_phone_.left, rect_phone_.top,
-            rect_phone_.right - rect_phone_.left, rect_phone_.bottom - rect_phone_.top,
+            child_w, child_h,
             SWP_NOZORDER | SWP_NOACTIVATE);
+        // Cave man tell SDL window has new size, so backbuffer resize too!
+        if (m_sdl_window) {
+            SDL_SetWindowSize(m_sdl_window, child_w, child_h);
+        }
     }
 
     notify_video_viewport();
@@ -504,7 +510,12 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == 1 && app_state_ != AppState::STREAMING) InvalidateRect(hwnd_, &rect_phone_, FALSE);
         return 0;
     case WM_SIZE:
-        if (wp != SIZE_MINIMIZED) { recalc_layout(); update_region(); }
+        if (wp != SIZE_MINIMIZED) {
+            recalc_layout();
+            update_region();
+            // Cave man trigger render now so live resize look smooth
+            PostMessage(hwnd_, WM_VIDEO_RENDER, 0, 0);
+        }
         return 0;
     case WM_SIZING:
         handle_sizing(wp, lp); return TRUE;

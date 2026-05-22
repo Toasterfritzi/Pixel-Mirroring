@@ -73,6 +73,12 @@ public:
     bool auto_grant_secure_settings();
     bool grant_secure_settings(const std::string& device_id);
 
+    // Cave man peek if app already live on phone.
+    bool is_app_installed(const std::string& device_id, const std::string& package_name);
+
+    // Cave man check if phone already trust cave app.
+    bool has_permission(const std::string& device_id, const std::string& package_name, const std::string& permission);
+
     // Cave man reads phone IP from Android route stones.
     std::string get_device_ip(const std::string& device_id);
 

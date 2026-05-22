@@ -105,6 +105,8 @@ void VideoRenderer::paint(SDL_Renderer* renderer, int x, int y, int width, int h
         if (m_texture) {
             SDL_DestroyTexture(m_texture);
         }
+        // Cave man set best scaling quality before make texture
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "best");
         m_texture = SDL_CreateTexture(
             renderer,
             SDL_PIXELFORMAT_IYUV,
@@ -117,6 +119,8 @@ void VideoRenderer::paint(SDL_Renderer* renderer, int x, int y, int width, int h
             std::cerr << "[Renderer] Could not create YUV texture: " << SDL_GetError() << std::endl;
             return;
         }
+        // Cave man set scale mode to best so big screen look nice
+        SDL_SetTextureScaleMode(m_texture, SDL_ScaleModeBest);
     }
 
     // Upload YUV planes directly — no CPU conversion needed

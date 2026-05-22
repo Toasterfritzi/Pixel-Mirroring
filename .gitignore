@@ -30,12 +30,7 @@ Client/PreviewWindow.exe
 *.pdb
 *.bin
 
-# Bundled Android tooling downloaded for local builds
-Client/vendor/platform-tools/
 
-# ADB platform-tools (downloaded, not committed)
-scrcpy_download/adb.exe
-scrcpy_download/*.dll
 
 # Java / Android debug artifacts
 *.hprof

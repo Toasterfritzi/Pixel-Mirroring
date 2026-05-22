@@ -519,6 +519,19 @@ bool AdbClient::grant_secure_settings(const std::string& device_id) {
     return true;
 }
 
+bool AdbClient::is_app_installed(const std::string& device_id, const std::string& package_name) {
+    // Cave man peek at phone app list. If package there, app live.
+    std::string output = execute_shell_command(device_id, "pm list packages " + package_name);
+    return output.find("package:" + package_name) != std::string::npos;
+}
+
+bool AdbClient::has_permission(const std::string& device_id, const std::string& package_name, const std::string& permission) {
+    // Cave man dig through permission stones. Look for "granted=true".
+    std::string output = execute_shell_command(device_id, "dumpsys package " + package_name);
+    std::string search = permission + ": granted=true";
+    return output.find(search) != std::string::npos;
+}
+
 std::string AdbClient::get_device_ip(const std::string& device_id) {
     std::string output = execute_shell_command(device_id, "ip route");
     std::smatch route_match;

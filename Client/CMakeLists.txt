@@ -62,26 +62,92 @@ if(PM_ANDROID_APK)
     )
 endif()
 
+# --- Bootstrap Android Platform-Tools (ADB) ---
+# Cave man need ADB to talk to fire-box phone. If no ADB, cave man go get it!
 if(WIN32)
-    set(PM_PLATFORM_TOOLS_DIR "${CMAKE_SOURCE_DIR}/vendor/platform-tools")
+    set(PM_ADB_EXPECTED_FILE "adb.exe")
+    set(PM_PLATFORM_TOOLS_URL "https://dl.google.com/android/repository/platform-tools-latest-windows.zip")
+elseif(APPLE)
+    set(PM_ADB_EXPECTED_FILE "adb")
+    set(PM_PLATFORM_TOOLS_URL "https://dl.google.com/android/repository/platform-tools-latest-darwin.zip")
+else()
+    set(PM_ADB_EXPECTED_FILE "adb")
+    set(PM_PLATFORM_TOOLS_URL "https://dl.google.com/android/repository/platform-tools-latest-linux.zip")
+endif()
+
+set(PM_PLATFORM_TOOLS_DIR "${CMAKE_SOURCE_DIR}/vendor/platform-tools")
+
+if(NOT EXISTS "${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_EXPECTED_FILE}")
+    message(STATUS "Ugg! ADB not found at ${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_EXPECTED_FILE}. Downloading from Google...")
+    set(PM_TEMP_ZIP "${CMAKE_CURRENT_BINARY_DIR}/platform-tools.zip")
+    
+    file(DOWNLOAD "${PM_PLATFORM_TOOLS_URL}" "${PM_TEMP_ZIP}" SHOW_PROGRESS STATUS PM_DOWNLOAD_STATUS)
+    list(GET PM_DOWNLOAD_STATUS 0 PM_DOWNLOAD_ERR)
+    if(NOT PM_DOWNLOAD_ERR EQUAL 0)
+        list(GET PM_DOWNLOAD_STATUS 1 PM_DOWNLOAD_MSG)
+        message(FATAL_ERROR "Ugg! Failed to download ADB: ${PM_DOWNLOAD_MSG}")
+    endif()
+
+    message(STATUS "Ugg! Extracting ADB...")
+    file(ARCHIVE_EXTRACT INPUT "${PM_TEMP_ZIP}" DESTINATION "${CMAKE_SOURCE_DIR}/vendor")
+    file(REMOVE "${PM_TEMP_ZIP}")
+    
+    # On POSIX, make ADB executable
+    if(NOT WIN32)
+        execute_process(COMMAND chmod +x "${PM_PLATFORM_TOOLS_DIR}/adb")
+    endif()
+    message(STATUS "Ugg! ADB bootstrap finished successfully!")
+endif()
+
+if(WIN32)
     set(PM_ADB_RUNTIME_FILES
         adb.exe
         AdbWinApi.dll
         AdbWinUsbApi.dll
     )
+else()
+    set(PM_ADB_RUNTIME_FILES
+        adb
+    )
+endif()
 
-    foreach(PM_ADB_RUNTIME_FILE IN LISTS PM_ADB_RUNTIME_FILES)
-        if(EXISTS "${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_RUNTIME_FILE}")
-            add_custom_command(TARGET PixelMirroring POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_RUNTIME_FILE}"
-                    "$<TARGET_FILE_DIR:PixelMirroring>/${PM_ADB_RUNTIME_FILE}"
-                COMMENT "Copy bundled ADB runtime"
-            )
-        else()
-            message(WARNING "Bundled ADB runtime file missing: ${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_RUNTIME_FILE}")
-        endif()
-    endforeach()
+foreach(PM_ADB_RUNTIME_FILE IN LISTS PM_ADB_RUNTIME_FILES)
+    if(EXISTS "${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_RUNTIME_FILE}")
+        add_custom_command(TARGET PixelMirroring POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_RUNTIME_FILE}"
+                "$<TARGET_FILE_DIR:PixelMirroring>/${PM_ADB_RUNTIME_FILE}"
+            COMMENT "Copy bundled ADB runtime: ${PM_ADB_RUNTIME_FILE}"
+        )
+    else()
+        message(WARNING "Bundled ADB runtime file missing: ${PM_PLATFORM_TOOLS_DIR}/${PM_ADB_RUNTIME_FILE}")
+    endif()
+endforeach()
+
+# --- Copy scrcpy-server.jar ---
+# Cave man need scrcpy server to throw pictures from phone to PC.
+set(PM_SCRCPY_SERVER_CANDIDATES
+    "${CMAKE_SOURCE_DIR}/../scrcpy_download/scrcpy-server.jar"
+    "${CMAKE_SOURCE_DIR}/scrcpy-server.jar"
+)
+
+set(PM_SCRCPY_SERVER_PATH "")
+foreach(PM_CANDIDATE IN LISTS PM_SCRCPY_SERVER_CANDIDATES)
+    if(EXISTS "${PM_CANDIDATE}")
+        set(PM_SCRCPY_SERVER_PATH "${PM_CANDIDATE}")
+        break()
+    endif()
+endforeach()
+
+if(PM_SCRCPY_SERVER_PATH)
+    add_custom_command(TARGET PixelMirroring POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PM_SCRCPY_SERVER_PATH}"
+            "$<TARGET_FILE_DIR:PixelMirroring>/scrcpy-server.jar"
+        COMMENT "Copy scrcpy-server.jar next to desktop client"
+    )
+else()
+    message(WARNING "Ugg! scrcpy-server.jar not found anywhere!")
 endif()
 
 target_include_directories(PixelMirroring PRIVATE ${FFMPEG_INCLUDE_DIRS})
