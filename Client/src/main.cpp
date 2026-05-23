@@ -540,6 +540,11 @@ static int app_main() {
     window->set_fps_limited(initial_settings.max_fps == 30);
     window->set_resolution_limited(initial_settings.max_size == 720);
 
+    std::atomic<bool> should_stop{false};
+    pm::stream::ScrcpyClient scrcpy;
+    pm::stream::VideoRenderer renderer;
+    pm::input::InputHandler input(&scrcpy);
+
     // MEOW. WIRE CONTEXT MENU CALLBACK.
     window->set_menu_callback([&](pm::window::MenuAction action) {
         pm::Settings current_settings = pm::load_settings();
@@ -607,24 +612,26 @@ static int app_main() {
                 }
                 std::thread([device_id, pin = current_settings.m_pin]() {
                     pm::adb::AdbClient adb;
-                    adb.init();
-                    adb.execute_shell_command(device_id, "input keyevent 224");
+                    
+                    // Wake up via ADB
+                    adb.execute_shell_command(device_id, "input keyevent WAKEUP");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    
+                    // Swipe up via ADB (robust physical coordinates injection)
+                    adb.execute_shell_command(device_id, "input swipe 500 1500 500 200 300");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+                    
+                    // Type PIN
+                    adb.execute_shell_command(device_id, "input text " + pin);
                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                    adb.execute_shell_command(device_id, "input swipe 300 1000 300 200 150");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(300));
-                    adb.execute_shell_command(device_id, "input text '" + pin + "'");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    
+                    // Enter
                     adb.execute_shell_command(device_id, "input keyevent 66");
                 }).detach();
                 break;
             }
         }
     });
-
-    std::atomic<bool> should_stop{false};
-    pm::stream::ScrcpyClient scrcpy;
-    pm::stream::VideoRenderer renderer;
-    pm::input::InputHandler input(&scrcpy);
 
     if (tray) {
         if (!tray->create("Pixel Mirroring", [&]() {
