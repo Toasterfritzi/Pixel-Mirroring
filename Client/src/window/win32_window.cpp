@@ -33,6 +33,40 @@ namespace {
         path.AddArc(r.X, r.Y + r.Height - d, d, d, 90, 90);
         path.CloseFigure();
     }
+
+    std::string wchar_to_utf8(wchar_t wch) {
+        // convert character. cave man talk utf8.
+        wchar_t wstr[2] = { wch, 0 };
+        char buf[8] = { 0 };
+        int len = WideCharToMultiByte(CP_UTF8, 0, wstr, 1, buf, sizeof(buf) - 1, nullptr, nullptr);
+        if (len > 0) {
+            return std::string(buf, len);
+        }
+        return "";
+    }
+
+    int vk_to_android_keycode(WPARAM wparam) {
+        // map VK to android key. cave man press buttons.
+        switch (wparam) {
+        case VK_RETURN:   return 66;  // AKEYCODE_ENTER
+        case VK_BACK:     return 67;  // AKEYCODE_DEL
+        case VK_ESCAPE:   return 4;   // AKEYCODE_BACK
+        case VK_LEFT:     return 21;  // AKEYCODE_DPAD_LEFT
+        case VK_RIGHT:    return 22;  // AKEYCODE_DPAD_RIGHT
+        case VK_UP:       return 19;  // AKEYCODE_DPAD_UP
+        case VK_DOWN:     return 20;  // AKEYCODE_DPAD_DOWN
+        case VK_TAB:      return 61;  // AKEYCODE_TAB
+        case VK_DELETE:   return 112; // AKEYCODE_FORWARD_DEL
+        case VK_HOME:     return 122; // AKEYCODE_MOVE_HOME
+        case VK_END:      return 123; // AKEYCODE_MOVE_END
+        case VK_PRIOR:    return 92;  // AKEYCODE_PAGE_UP
+        case VK_NEXT:     return 93;  // AKEYCODE_PAGE_DOWN
+        case VK_VOLUME_UP:   return 24;  // AKEYCODE_VOLUME_UP
+        case VK_VOLUME_DOWN: return 25;  // AKEYCODE_VOLUME_DOWN
+        case VK_VOLUME_MUTE: return 164; // AKEYCODE_VOLUME_MUTE
+        default:          return 0;   // Printable or unmapped
+        }
+    }
 }
 
 std::unique_ptr<IWindow> create_window(int w, int h, const std::string& t) {
@@ -588,6 +622,54 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
+    case WM_KEYDOWN:
+    case WM_KEYUP: {
+        if (app_state_ == AppState::STREAMING && m_key_cb_) {
+            int action = (msg == WM_KEYDOWN) ? 0 : 1;
+            int ak = vk_to_android_keycode(wp);
+            if (ak != 0) {
+                m_key_cb_(action, ak);
+                return 0;
+            }
+        }
+        break;
+    }
+    case WM_CHAR: {
+        if (app_state_ == AppState::STREAMING && m_text_cb_) {
+            wchar_t wch = static_cast<wchar_t>(wp);
+            if (wch >= 32) {
+                std::string utf8 = wchar_to_utf8(wch);
+                if (!utf8.empty()) {
+                    m_text_cb_(utf8);
+                }
+                return 0;
+            }
+        }
+        break;
+    }
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL: {
+        if (app_state_ == AppState::STREAMING && m_scroll_cb_) {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(hwnd_, &pt);
+            if (PtInRect(&rect_phone_, pt)) {
+                int delta = GET_WHEEL_DELTA_WPARAM(wp);
+                float scroll_val = static_cast<float>(delta) / 120.0f;
+                int rx = pt.x - rect_phone_.left;
+                int ry = pt.y - rect_phone_.top;
+                int rw = rect_phone_.right - rect_phone_.left;
+                int rh = rect_phone_.bottom - rect_phone_.top;
+                
+                if (msg == WM_MOUSEWHEEL) {
+                    m_scroll_cb_(rx, ry, rw, rh, 0.0f, scroll_val);
+                } else {
+                    m_scroll_cb_(rx, ry, rw, rh, scroll_val, 0.0f);
+                }
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_VIDEO_RENDER:
         // Cave man render direct on child window — coordinates relative to child!
         if (app_state_ == AppState::STREAMING && m_render_cb_ && m_sdl_renderer) {

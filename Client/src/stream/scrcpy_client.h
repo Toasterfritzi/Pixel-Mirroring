@@ -49,6 +49,7 @@ public:
     void inject_touch(int action, float x, float y, int w, int h);
     void inject_keycode(int action, int keycode);
     void inject_scroll(float x, float y, int w, int h, float hscroll, float vscroll);
+    void inject_text(const std::string& text);
 
 private:
     bool setup_tunnel();

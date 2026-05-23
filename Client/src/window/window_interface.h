@@ -58,6 +58,15 @@ public:
     // Set pointer callback. Handle click and drag in video.
     virtual void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) = 0;
     
+    // Set key callback. Handle physical keyboard key down and up.
+    virtual void set_key_callback(std::function<void(int, int)> cb) = 0;
+
+    // Set text callback. Handle text input.
+    virtual void set_text_callback(std::function<void(const std::string&)> cb) = 0;
+
+    // Set scroll callback. Handle mouse scroll wheel events.
+    virtual void set_scroll_callback(std::function<void(int, int, int, int, float, float)> cb) = 0;
+    
     
     // Sets the current app state (changes what is drawn in the phone area)
     virtual void set_app_state(AppState state) = 0;

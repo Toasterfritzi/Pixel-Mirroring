@@ -527,6 +527,22 @@ static int app_main() {
     window->set_pointer_callback([&](pm::window::PointerAction action, int x, int y, int w, int h) {
         input.handle_pointer(action, x, y, w, h);
     });
+    window->set_key_callback([&](int action, int keycode) {
+        // key down/up. cave man click keys.
+        if (action == 0) {
+            input.handle_key_down(keycode);
+        } else {
+            input.handle_key_up(keycode);
+        }
+    });
+    window->set_text_callback([&](const std::string& text) {
+        // text write. cave man write words.
+        input.handle_text(text);
+    });
+    window->set_scroll_callback([&](int x, int y, int w, int h, float hscroll, float vscroll) {
+        // scroll wheel. cave man scroll screen.
+        input.handle_scroll(x, y, w, h, hscroll, vscroll);
+    });
     std::thread connection_thread;
     std::atomic<bool> connection_running{false};
     const std::string client_name = get_client_name();
