@@ -26,7 +26,10 @@
 #include "stream/video_renderer.h"
 #include "input/input_handler.h"
 #include "network/network_scanner.h"
+#include "tray/tray_interface.h"
 #include "settings.h"
+#include <httplib.h>
+#include <nlohmann/json.hpp>
 
 namespace {
 constexpr const char* ANDROID_PACKAGE = "dev.pixelmirroring.app";
@@ -479,6 +482,9 @@ static int app_main() {
 #endif
         return 1;
     }
+
+    auto tray = pm::tray::create_tray();
+
     window->set_aspect_ratio(340.0 / 604.0);
     window->set_app_state(pm::window::AppState::SETUP);
     window->set_status_text("");
@@ -521,6 +527,23 @@ static int app_main() {
     pm::stream::ScrcpyClient scrcpy;
     pm::stream::VideoRenderer renderer;
     pm::input::InputHandler input(&scrcpy);
+
+    if (tray) {
+        tray->create("Pixel Mirroring", [&]() {
+            window->post_task([&]() {
+                if (!window->is_visible()) {
+                    window->show();
+                    if (tray) tray->hide();
+                    // Wake up phone screen! KEYCODE_WAKEUP is 224
+                    if (scrcpy.is_running()) {
+                        scrcpy.inject_keycode(0, 224); // KEYCODE_WAKEUP down
+                        scrcpy.inject_keycode(1, 224); // KEYCODE_WAKEUP up
+                    }
+                }
+            });
+        });
+    }
+
     window->set_video_viewport_callback([&](int x, int y, int w, int h) {
         renderer.update_viewport(x, y, w, h);
     });
@@ -545,6 +568,8 @@ static int app_main() {
     });
     std::thread connection_thread;
     std::atomic<bool> connection_running{false};
+    std::thread screen_poll_thread;
+    std::atomic<bool> stop_screen_poll{false};
     const std::string client_name = get_client_name();
 
     std::string client_id;
@@ -569,6 +594,12 @@ static int app_main() {
 
     auto start_connection = [&](bool automatic) {
         if (connection_running) return;
+        
+        stop_screen_poll = true;
+        if (screen_poll_thread.joinable()) {
+            screen_poll_thread.join();
+        }
+
         if (connection_thread.joinable()) {
             connection_thread.join();
         }
@@ -612,7 +643,60 @@ static int app_main() {
                 w->set_status_text(name.empty() ? "Verbunden" : name);
             });
             std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (!start_stream(*window, scrcpy, renderer, input, tcp_device->id) && !should_stop) {
+            if (start_stream(*window, scrcpy, renderer, input, tcp_device->id)) {
+                // Parse IP from device ID (e.g. 192.168.1.100:5555)
+                std::string device_ip = tcp_device->id;
+                auto pos = device_ip.find(':');
+                if (pos != std::string::npos) {
+                    device_ip = device_ip.substr(0, pos);
+                }
+
+                stop_screen_poll = false;
+                if (screen_poll_thread.joinable()) {
+                    screen_poll_thread.join();
+                }
+
+                screen_poll_thread = std::thread([&, device_ip]() {
+                    httplib::Client cli(device_ip, 18294);
+                    cli.set_connection_timeout(1, 0); // 1s
+                    cli.set_read_timeout(1, 500000);   // 1.5s
+                    
+                    bool last_screen_on = true;
+                    
+                    while (!should_stop && !stop_screen_poll && scrcpy.is_running()) {
+                        auto res = cli.Get("/screen");
+                        if (res && res->status == 200) {
+                            try {
+                                auto resp_json = nlohmann::json::parse(res->body);
+                                bool screen_on = resp_json["screenOn"].get<bool>();
+                                if (screen_on != last_screen_on) {
+                                    last_screen_on = screen_on;
+                                    window->post_task([&, screen_on]() {
+                                        if (!screen_on) {
+                                            if (window->is_visible()) {
+                                                window->hide();
+                                                if (tray) tray->show();
+                                            }
+                                        } else {
+                                            if (!window->is_visible()) {
+                                                window->show();
+                                                if (tray) tray->hide();
+                                            }
+                                        }
+                                    });
+                                }
+                            } catch (...) {
+                                // Ignore JSON parse error
+                            }
+                        }
+                        
+                        // Sleep 1 second before next poll (using 10x 100ms sleep for responsiveness to stop request)
+                        for (int i = 0; i < 10 && !should_stop && !stop_screen_poll && scrcpy.is_running(); ++i) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        }
+                    }
+                });
+            } else if (!should_stop) {
                 window->post_task([w = window.get()]() {
                     w->set_app_state(pm::window::AppState::SCANNING);
                     w->set_status_text("Stream fehlgeschlagen.");
@@ -634,8 +718,11 @@ static int app_main() {
     window->process_messages();
 
     should_stop = true;
+    stop_screen_poll = true;
     scrcpy.stop();
     if (connection_thread.joinable()) connection_thread.join();
+    if (screen_poll_thread.joinable()) screen_poll_thread.join();
+    if (tray) tray->hide();
 
 #ifdef _WIN32
     Gdiplus::GdiplusShutdown(gdiplusToken);

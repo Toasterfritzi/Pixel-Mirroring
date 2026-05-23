@@ -2,7 +2,7 @@
 #include <string>
 #include <memory>
 #include <functional>
-struct SDL_Renderer;
+struct SDL_Renderer;
 struct SDL_Window;
 
 namespace pm::window {
@@ -36,6 +36,12 @@ public:
     
     // Shows the window on screen.
     virtual void show() = 0;
+    
+    // Hides the window on screen.
+    virtual void hide() = 0;
+    
+    // Checks if the window is currently visible.
+    virtual bool is_visible() const = 0;
     
     // Enters the main message loop. Blocks until the window is closed.
     virtual void process_messages() = 0;

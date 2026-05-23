@@ -151,7 +151,9 @@ bool Win32Window::create() {
     return true;
 }
 
-void Win32Window::show() { ShowWindow(hwnd_, SW_SHOW); UpdateWindow(hwnd_); }
+void Win32Window::show() { ShowWindow(hwnd_, SW_SHOW); UpdateWindow(hwnd_); visible_ = true; }
+void Win32Window::hide() { ShowWindow(hwnd_, SW_HIDE); visible_ = false; }
+bool Win32Window::is_visible() const { return visible_; }
 
 void Win32Window::process_messages() {
     MSG msg;

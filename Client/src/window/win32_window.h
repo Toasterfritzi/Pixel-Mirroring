@@ -21,6 +21,8 @@ public:
 
     bool create() override;
     void show() override;
+    void hide() override;
+    bool is_visible() const override;
     void process_messages() override;
     
     void set_aspect_ratio(double ratio) override;
@@ -89,6 +91,7 @@ private:
     
     // State
     AppState app_state_{AppState::SETUP};
+    bool visible_{true};
     std::string status_text_;
     int scan_animation_frame_{0};
     
