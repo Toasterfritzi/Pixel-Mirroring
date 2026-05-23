@@ -20,10 +20,10 @@ private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
     LRESULT handle_message(UINT msg, WPARAM wparam, LPARAM lparam);
 
-    HWND hwnd_{nullptr};
-    NOTIFYICONDATAW nid_{};
-    std::function<void()> on_click_;
-    bool shown_{false};
+    HWND m_hwnd{nullptr};
+    NOTIFYICONDATAW m_nid{};
+    std::function<void()> m_on_click;
+    bool m_shown{false};
 };
 
 } // namespace pm::tray

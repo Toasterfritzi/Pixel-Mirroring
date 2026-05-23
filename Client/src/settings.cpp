@@ -105,7 +105,7 @@ Settings load_settings() {
                 s.max_size = std::stoi(value);
             } catch (...) {}
         } else if (key == "pin") {
-            s.pin = decrypt_pin(value);
+            s.m_pin = decrypt_pin(value);
         }
     }
     return s;
@@ -119,7 +119,7 @@ void save_settings(const Settings& s) {
     }
     file << "max_fps=" << s.max_fps << "\n";
     file << "max_size=" << s.max_size << "\n";
-    file << "pin=" << encrypt_pin(s.pin) << "\n";
+    file << "pin=" << encrypt_pin(s.m_pin) << "\n";
 }
 
 } // namespace pm

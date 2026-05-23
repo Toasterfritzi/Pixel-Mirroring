@@ -1,6 +1,8 @@
 #include <thread>
 #include <random>
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -67,28 +69,47 @@ std::string get_client_name() {
 }
 
 std::string prompt_user_for_pin() {
+    while (true) {
 #ifdef _WIN32
-    std::string command = "powershell -Command \"[void][System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic'); [Microsoft.VisualBasic.Interaction]::InputBox('PIN zum automatischen Entsperren eingeben:', 'PIN einrichten', '')\"";
-    FILE* pipe = _popen(command.c_str(), "r");
+        std::string command = "powershell -Command \"[void][System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic'); [Microsoft.VisualBasic.Interaction]::InputBox('PIN zum automatischen Entsperren eingeben (nur Ziffern):', 'PIN einrichten', '')\"";
+        FILE* pipe = _popen(command.c_str(), "r");
 #else
-    std::string command = "osascript -e 'display dialog \"PIN zum automatischen Entsperren eingeben:\" default answer \"\" with title \"PIN einrichten\"' -e 'text returned of result' 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
+        std::string command = "osascript -e 'display dialog \"PIN zum automatischen Entsperren eingeben (nur Ziffern):\" default answer \"\" with title \"PIN einrichten\"' -e 'text returned of result' 2>/dev/null";
+        FILE* pipe = popen(command.c_str(), "r");
 #endif
-    if (!pipe) return "";
-    char buffer[128];
-    std::string result = "";
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
+        if (!pipe) return "";
+        char buffer[128];
+        std::string result = "";
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
 #ifdef _WIN32
-    _pclose(pipe);
+        _pclose(pipe);
 #else
-    pclose(pipe);
+        pclose(pipe);
 #endif
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t')) {
-        result.pop_back();
+        while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t')) {
+            result.pop_back();
+        }
+
+        if (result.empty()) return "";
+
+        bool all_digits = true;
+        for (char c : result) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) {
+                all_digits = false;
+                break;
+            }
+        }
+
+        if (all_digits && result.length() <= 16) {
+            return result;
+        }
+
+#ifdef _WIN32
+        MessageBoxA(nullptr, "PIN darf nur aus Ziffern bestehen und maximal 16 Zeichen lang sein.", "Ungueltige Eingabe", MB_OK | MB_ICONERROR);
+#endif
     }
-    return result;
 }
 
 bool path_exists(const std::filesystem::path& path) {
@@ -548,7 +569,7 @@ static int app_main() {
             case pm::window::MenuAction::SET_PIN: {
                 std::string new_pin = prompt_user_for_pin();
                 if (!new_pin.empty()) {
-                    current_settings.pin = new_pin;
+                    current_settings.m_pin = new_pin;
                     pm::save_settings(current_settings);
                     window->set_status_text("PIN erfolgreich gespeichert.");
                 } else {
@@ -560,12 +581,12 @@ static int app_main() {
                         MB_YESNO | MB_ICONQUESTION
                     );
                     if (answer == IDYES) {
-                        current_settings.pin = "";
+                        current_settings.m_pin = "";
                         pm::save_settings(current_settings);
                         window->set_status_text("PIN geloescht.");
                     }
 #else
-                    current_settings.pin = "";
+                    current_settings.m_pin = "";
                     pm::save_settings(current_settings);
                     window->set_status_text("PIN geloescht.");
 #endif
@@ -573,7 +594,7 @@ static int app_main() {
                 break;
             }
             case pm::window::MenuAction::UNLOCK_DEVICE: {
-                if (current_settings.pin.empty()) {
+                if (current_settings.m_pin.empty()) {
                     window->set_status_text("PIN nicht eingerichtet.");
                     break;
                 }
@@ -584,14 +605,14 @@ static int app_main() {
                 if (device_id.empty()) {
                     break;
                 }
-                std::thread([device_id, pin = current_settings.pin]() {
+                std::thread([device_id, pin = current_settings.m_pin]() {
                     pm::adb::AdbClient adb;
                     adb.init();
                     adb.execute_shell_command(device_id, "input keyevent 224");
                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
                     adb.execute_shell_command(device_id, "input swipe 300 1000 300 200 150");
                     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-                    adb.execute_shell_command(device_id, "input text " + pin);
+                    adb.execute_shell_command(device_id, "input text '" + pin + "'");
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     adb.execute_shell_command(device_id, "input keyevent 66");
                 }).detach();
@@ -606,19 +627,26 @@ static int app_main() {
     pm::input::InputHandler input(&scrcpy);
 
     if (tray) {
-        tray->create("Pixel Mirroring", [&]() {
+        if (!tray->create("Pixel Mirroring", [&]() {
             window->post_task([&]() {
                 if (!window->is_visible()) {
                     window->show();
-                    if (tray) tray->hide();
-                    // Wake up phone screen! KEYCODE_WAKEUP is 224
-                    if (scrcpy.is_running()) {
-                        scrcpy.inject_keycode(0, 224); // KEYCODE_WAKEUP down
-                        scrcpy.inject_keycode(1, 224); // KEYCODE_WAKEUP up
+                    if (tray) {
+                        tray->hide();
+                        // Wake phone. KEYCODE_WAKEUP 224
+                        if (scrcpy.is_running()) {
+                            scrcpy.inject_keycode(0, 224); // WAKEUP down
+                            scrcpy.inject_keycode(1, 224); // WAKEUP up
+                        }
                     }
                 }
             });
-        });
+        })) {
+#ifdef _WIN32
+            MessageBoxA(nullptr, "Tray-Icon konnte nicht erstellt werden.", "Fehler", MB_OK | MB_ICONERROR);
+#endif
+            tray.reset();
+        }
     }
 
     window->set_video_viewport_callback([&](int x, int y, int w, int h) {

@@ -25,7 +25,8 @@ enum class MenuAction {
     FACTORY_RESET,
     TOGGLE_FPS_LIMIT,
     TOGGLE_RESOLUTION_LIMIT,
-    SET_PIN
+    SET_PIN,
+    UNLOCK_DEVICE
 };
 
 class IWindow {

@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MirroringService : Service() {
     companion object {
@@ -26,16 +27,16 @@ class MirroringService : Service() {
     private val adbWifiManager by lazy { AdbWifiManager(this) }
     private val clientStore by lazy { PairedClientStore(this) }
     private val pairingMutex = Mutex()
-    private var isScreenOn: Boolean = true
+    private val isScreenOn = AtomicBoolean(true)
     private var receiverRegistered = false
 
     private val screenStateReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
             if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
-                isScreenOn = false
+                isScreenOn.set(false)
                 Log.i(TAG, "Screen went OFF")
             } else if (intent?.action == android.content.Intent.ACTION_SCREEN_ON) {
-                isScreenOn = true
+                isScreenOn.set(true)
                 Log.i(TAG, "Screen went ON")
             }
         }
@@ -46,7 +47,7 @@ class MirroringService : Service() {
     override fun onCreate() {
         super.onCreate()
         val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-        isScreenOn = powerManager.isInteractive
+        isScreenOn.set(powerManager.isInteractive)
         
         val filter = android.content.IntentFilter().apply {
             addAction(android.content.Intent.ACTION_SCREEN_OFF)
@@ -125,7 +126,7 @@ class MirroringService : Service() {
                 HttpResponse(
                     statusCode = 200,
                     contentType = "application/json; charset=utf-8",
-                    body = "{\"screenOn\":$isScreenOn}"
+                    body = "{\"screenOn\":${isScreenOn.get()}}"
                 )
             }
 

@@ -8,7 +8,7 @@ namespace pm {
 struct Settings {
     int max_fps = 60;       // 60 = unlocked, 30 = limited
     int max_size = 0;       // 0 = full resolution, 720 = 720p
-    std::string pin = "";   // Saved PIN, encrypted on Windows
+    std::string m_pin = ""; // Saved PIN. Encrypted on Windows.
 };
 
 Settings load_settings();
