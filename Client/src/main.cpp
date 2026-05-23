@@ -66,6 +66,31 @@ std::string get_client_name() {
     return "Desktop-PC";
 }
 
+std::string prompt_user_for_pin() {
+#ifdef _WIN32
+    std::string command = "powershell -Command \"[void][System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic'); [Microsoft.VisualBasic.Interaction]::InputBox('PIN zum automatischen Entsperren eingeben:', 'PIN einrichten', '')\"";
+    FILE* pipe = _popen(command.c_str(), "r");
+#else
+    std::string command = "osascript -e 'display dialog \"PIN zum automatischen Entsperren eingeben:\" default answer \"\" with title \"PIN einrichten\"' -e 'text returned of result' 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    if (!pipe) return "";
+    char buffer[128];
+    std::string result = "";
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+    }
+#ifdef _WIN32
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t')) {
+        result.pop_back();
+    }
+    return result;
+}
+
 bool path_exists(const std::filesystem::path& path) {
     std::error_code ec;
     return std::filesystem::exists(path, ec);
@@ -518,6 +543,58 @@ static int app_main() {
                 current_settings.max_size = (current_settings.max_size == 720) ? 0 : 720;
                 pm::save_settings(current_settings);
                 window->set_resolution_limited(current_settings.max_size == 720);
+                break;
+            }
+            case pm::window::MenuAction::SET_PIN: {
+                std::string new_pin = prompt_user_for_pin();
+                if (!new_pin.empty()) {
+                    current_settings.pin = new_pin;
+                    pm::save_settings(current_settings);
+                    window->set_status_text("PIN erfolgreich gespeichert.");
+                } else {
+#ifdef _WIN32
+                    int answer = MessageBoxA(
+                        (HWND)window->get_native_handle(),
+                        "Moechtest du die gespeicherte PIN loeschen?",
+                        "PIN loeschen",
+                        MB_YESNO | MB_ICONQUESTION
+                    );
+                    if (answer == IDYES) {
+                        current_settings.pin = "";
+                        pm::save_settings(current_settings);
+                        window->set_status_text("PIN geloescht.");
+                    }
+#else
+                    current_settings.pin = "";
+                    pm::save_settings(current_settings);
+                    window->set_status_text("PIN geloescht.");
+#endif
+                }
+                break;
+            }
+            case pm::window::MenuAction::UNLOCK_DEVICE: {
+                if (current_settings.pin.empty()) {
+                    window->set_status_text("PIN nicht eingerichtet.");
+                    break;
+                }
+                if (!scrcpy.is_running()) {
+                    break;
+                }
+                std::string device_id = scrcpy.get_device_id();
+                if (device_id.empty()) {
+                    break;
+                }
+                std::thread([device_id, pin = current_settings.pin]() {
+                    pm::adb::AdbClient adb;
+                    adb.init();
+                    adb.execute_shell_command(device_id, "input keyevent 224");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    adb.execute_shell_command(device_id, "input swipe 300 1000 300 200 150");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                    adb.execute_shell_command(device_id, "input text " + pin);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    adb.execute_shell_command(device_id, "input keyevent 66");
+                }).detach();
                 break;
             }
         }

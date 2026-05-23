@@ -624,13 +624,29 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
-    case WM_KEYDOWN:
-    case WM_KEYUP: {
+    case WM_KEYDOWN: {
+        if (app_state_ == AppState::STREAMING) {
+            if (wp == 'U' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                if (menu_cb_) {
+                    menu_cb_(MenuAction::UNLOCK_DEVICE);
+                }
+                return 0;
+            }
+        }
         if (app_state_ == AppState::STREAMING && m_key_cb_) {
-            int action = (msg == WM_KEYDOWN) ? 0 : 1;
             int ak = vk_to_android_keycode(wp);
             if (ak != 0) {
-                m_key_cb_(action, ak);
+                m_key_cb_(0, ak);
+                return 0;
+            }
+        }
+        break;
+    }
+    case WM_KEYUP: {
+        if (app_state_ == AppState::STREAMING && m_key_cb_) {
+            int ak = vk_to_android_keycode(wp);
+            if (ak != 0) {
+                m_key_cb_(1, ak);
                 return 0;
             }
         }
@@ -759,11 +775,17 @@ void Win32Window::show_context_menu(POINT pt) {
     constexpr UINT ID_FACTORY_RESET = 1001;
     constexpr UINT ID_TOGGLE_FPS    = 1002;
     constexpr UINT ID_TOGGLE_RES    = 1003;
+    constexpr UINT ID_SET_PIN       = 1004;
+    constexpr UINT ID_UNLOCK_DEVICE = 1005;
 
     AppendMenuW(menu, MF_STRING, ID_TOGGLE_FPS,
         fps_limited_ ? L"\u2713  FPS begrenzen (30)" : L"    FPS begrenzen (30)");
     AppendMenuW(menu, MF_STRING, ID_TOGGLE_RES,
         resolution_limited_ ? L"\u2713  Aufloesung begrenzen (720p)" : L"    Aufloesung begrenzen (720p)");
+    AppendMenuW(menu, MF_STRING, ID_SET_PIN, L"    PIN zum Entsperren festlegen");
+    if (app_state_ == AppState::STREAMING) {
+        AppendMenuW(menu, MF_STRING, ID_UNLOCK_DEVICE, L"    Handy entsperren (Strg+U)");
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, ID_FACTORY_RESET, L"    Werkseinstellungen zuruecksetzen");
 
@@ -779,6 +801,8 @@ void Win32Window::show_context_menu(POINT pt) {
         case ID_FACTORY_RESET: action = MenuAction::FACTORY_RESET; break;
         case ID_TOGGLE_FPS:    action = MenuAction::TOGGLE_FPS_LIMIT; break;
         case ID_TOGGLE_RES:    action = MenuAction::TOGGLE_RESOLUTION_LIMIT; break;
+        case ID_SET_PIN:       action = MenuAction::SET_PIN; break;
+        case ID_UNLOCK_DEVICE: action = MenuAction::UNLOCK_DEVICE; break;
         default: return;
     }
     if (menu_cb_) menu_cb_(action);

@@ -40,6 +40,7 @@ public:
     bool is_running() const;
     int video_width() const { return static_cast<int>(initial_width_); }
     int video_height() const { return static_cast<int>(initial_height_); }
+    const std::string& get_device_id() const { return config_.device_id; }
 
     // Callbacks
     using FrameCallback = std::function<void(AVFrame* frame)>;

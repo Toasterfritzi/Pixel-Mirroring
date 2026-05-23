@@ -24,7 +24,8 @@ enum class PointerAction {
 enum class MenuAction {
     FACTORY_RESET,
     TOGGLE_FPS_LIMIT,
-    TOGGLE_RESOLUTION_LIMIT
+    TOGGLE_RESOLUTION_LIMIT,
+    SET_PIN
 };
 
 class IWindow {
