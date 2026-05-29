@@ -65,4 +65,16 @@ void InputHandler::handle_key_up(int keycode) {
     client_->inject_keycode(1, keycode);
 }
 
+void InputHandler::handle_scroll(int x, int y, int ww, int wh, float hscroll, float vscroll) {
+    // scroll convert window to device. cave man spin wheel.
+    int dx, dy;
+    window_to_device(x, y, ww, wh, &dx, &dy);
+    client_->inject_scroll(static_cast<float>(dx), static_cast<float>(dy), m_device_width, m_device_height, hscroll, vscroll);
+}
+
+void InputHandler::handle_text(const std::string& text) {
+    // text inject. cave man send string.
+    client_->inject_text(text);
+}
+
 } // namespace pm::input

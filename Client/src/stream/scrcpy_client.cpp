@@ -475,23 +475,81 @@ void ScrcpyClient::inject_touch(int action, float x, float y, int w, int h) {
 void ScrcpyClient::inject_keycode(int action, int keycode) {
     if (!running_ || control_socket_ == INVALID_SOCKET) return;
     
-    uint8_t buf[18] = {0};
+    // keycode send. cave man type keys.
+    uint8_t buf[14] = {0};
     buf[0] = 0; // SC_CONTROL_MSG_TYPE_INJECT_KEYCODE
     buf[1] = action; // 0=DOWN, 1=UP
     
+    // keycode BE
     buf[2] = (keycode >> 24) & 0xff;
     buf[3] = (keycode >> 16) & 0xff;
     buf[4] = (keycode >> 8) & 0xff;
     buf[5] = keycode & 0xff;
-    // scancode = 0
-    // metaState = 0
-    // repeat = 0
     
-    send(control_socket_, (const char*)buf, 18, 0);
+    // repeat BE = 0 (buf[6..9])
+    // metaState BE = 0 (buf[10..13])
+    
+    send(control_socket_, (const char*)buf, 14, 0);
 }
 
 void ScrcpyClient::inject_scroll(float x, float y, int w, int h, float hscroll, float vscroll) {
-    // Implement scroll message (21 bytes)
+    if (!running_ || control_socket_ == INVALID_SOCKET) return;
+
+    // scroll screen. cave man spin wheel.
+    auto write16 = [](uint8_t* out, uint16_t value) {
+        out[0] = static_cast<uint8_t>((value >> 8) & 0xff);
+        out[1] = static_cast<uint8_t>(value & 0xff);
+    };
+    auto write32 = [](uint8_t* out, uint32_t value) {
+        out[0] = static_cast<uint8_t>((value >> 24) & 0xff);
+        out[1] = static_cast<uint8_t>((value >> 16) & 0xff);
+        out[2] = static_cast<uint8_t>((value >> 8) & 0xff);
+        out[3] = static_cast<uint8_t>(value & 0xff);
+    };
+
+    uint8_t buf[21] = {0};
+    buf[0] = 3; // SC_CONTROL_MSG_TYPE_INJECT_SCROLL_EVENT
+
+    write32(buf + 1, static_cast<uint32_t>(x));
+    write32(buf + 5, static_cast<uint32_t>(y));
+    write16(buf + 9, static_cast<uint16_t>(w));
+    write16(buf + 11, static_cast<uint16_t>(h));
+
+    // fixed-point: float * 8192
+    float hs_scaled = hscroll * 8192.0f;
+    float vs_scaled = vscroll * 8192.0f;
+
+    // Clamp to int16 range
+    int16_t hs_val = static_cast<int16_t>((std::max)(-32768.0f, (std::min)(hs_scaled, 32767.0f)));
+    int16_t vs_val = static_cast<int16_t>((std::max)(-32768.0f, (std::min)(vs_scaled, 32767.0f)));
+
+    write16(buf + 13, static_cast<uint16_t>(hs_val));
+    write16(buf + 15, static_cast<uint16_t>(vs_val));
+
+    // buttons = 0 (4 bytes)
+    write32(buf + 17, 0);
+
+    send(control_socket_, (const char*)buf, sizeof(buf), 0);
+}
+
+void ScrcpyClient::inject_text(const std::string& text) {
+    if (!running_ || control_socket_ == INVALID_SOCKET || text.empty()) return;
+
+    // text send. cave man write words.
+    auto write32 = [](uint8_t* out, uint32_t value) {
+        out[0] = static_cast<uint8_t>((value >> 24) & 0xff);
+        out[1] = static_cast<uint8_t>((value >> 16) & 0xff);
+        out[2] = static_cast<uint8_t>((value >> 8) & 0xff);
+        out[3] = static_cast<uint8_t>(value & 0xff);
+    };
+
+    uint32_t len = static_cast<uint32_t>(text.size());
+    std::vector<uint8_t> buf(5 + len);
+    buf[0] = 1; // SC_CONTROL_MSG_TYPE_INJECT_TEXT
+    write32(buf.data() + 1, len);
+    std::memcpy(buf.data() + 5, text.data(), len);
+
+    send(control_socket_, (const char*)buf.data(), static_cast<int>(buf.size()), 0);
 }
 
 } // namespace pm::stream

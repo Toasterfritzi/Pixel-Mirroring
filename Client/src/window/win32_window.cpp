@@ -33,6 +33,40 @@ namespace {
         path.AddArc(r.X, r.Y + r.Height - d, d, d, 90, 90);
         path.CloseFigure();
     }
+
+    std::string wchar_to_utf8(wchar_t wch) {
+        // convert character. cave man talk utf8.
+        wchar_t wstr[2] = { wch, 0 };
+        char buf[8] = { 0 };
+        int len = WideCharToMultiByte(CP_UTF8, 0, wstr, 1, buf, sizeof(buf) - 1, nullptr, nullptr);
+        if (len > 0) {
+            return std::string(buf, len);
+        }
+        return "";
+    }
+
+    int vk_to_android_keycode(WPARAM wparam) {
+        // map VK to android key. cave man press buttons.
+        switch (wparam) {
+        case VK_RETURN:   return 66;  // AKEYCODE_ENTER
+        case VK_BACK:     return 67;  // AKEYCODE_DEL
+        case VK_ESCAPE:   return 4;   // AKEYCODE_BACK
+        case VK_LEFT:     return 21;  // AKEYCODE_DPAD_LEFT
+        case VK_RIGHT:    return 22;  // AKEYCODE_DPAD_RIGHT
+        case VK_UP:       return 19;  // AKEYCODE_DPAD_UP
+        case VK_DOWN:     return 20;  // AKEYCODE_DPAD_DOWN
+        case VK_TAB:      return 61;  // AKEYCODE_TAB
+        case VK_DELETE:   return 112; // AKEYCODE_FORWARD_DEL
+        case VK_HOME:     return 122; // AKEYCODE_MOVE_HOME
+        case VK_END:      return 123; // AKEYCODE_MOVE_END
+        case VK_PRIOR:    return 92;  // AKEYCODE_PAGE_UP
+        case VK_NEXT:     return 93;  // AKEYCODE_PAGE_DOWN
+        case VK_VOLUME_UP:   return 24;  // AKEYCODE_VOLUME_UP
+        case VK_VOLUME_DOWN: return 25;  // AKEYCODE_VOLUME_DOWN
+        case VK_VOLUME_MUTE: return 164; // AKEYCODE_VOLUME_MUTE
+        default:          return 0;   // Printable or unmapped
+        }
+    }
 }
 
 std::unique_ptr<IWindow> create_window(int w, int h, const std::string& t) {
@@ -117,7 +151,15 @@ bool Win32Window::create() {
     return true;
 }
 
-void Win32Window::show() { ShowWindow(hwnd_, SW_SHOW); UpdateWindow(hwnd_); }
+void Win32Window::show() {
+    ShowWindow(hwnd_, SW_SHOW);
+    UpdateWindow(hwnd_);
+    visible_ = true;
+    // Cave man force redraw of SDL frame when window shown
+    PostMessage(hwnd_, WM_VIDEO_RENDER, 0, 0);
+}
+void Win32Window::hide() { ShowWindow(hwnd_, SW_HIDE); visible_ = false; }
+bool Win32Window::is_visible() const { return visible_; }
 
 void Win32Window::process_messages() {
     MSG msg;
@@ -501,6 +543,14 @@ LRESULT CALLBACK Win32Window::window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 }
 
 LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
+    static UINT restore_msg = RegisterWindowMessageA("PixelMirroringRestoreMsg");
+    if (msg == restore_msg) {
+        if (m_restore_cb_) {
+            m_restore_cb_();
+        }
+        return 0;
+    }
+
     switch (msg) {
     case WM_NCCALCSIZE:
         // Cave man remove window frame — no border artifacts
@@ -588,6 +638,70 @@ LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
+    case WM_KEYDOWN: {
+        if (app_state_ == AppState::STREAMING) {
+            if (wp == 'U' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                if (menu_cb_) {
+                    menu_cb_(MenuAction::UNLOCK_DEVICE);
+                }
+                return 0;
+            }
+        }
+        if (app_state_ == AppState::STREAMING && m_key_cb_) {
+            int ak = vk_to_android_keycode(wp);
+            if (ak != 0) {
+                m_key_cb_(0, ak);
+                return 0;
+            }
+        }
+        break;
+    }
+    case WM_KEYUP: {
+        if (app_state_ == AppState::STREAMING && m_key_cb_) {
+            int ak = vk_to_android_keycode(wp);
+            if (ak != 0) {
+                m_key_cb_(1, ak);
+                return 0;
+            }
+        }
+        break;
+    }
+    case WM_CHAR: {
+        if (app_state_ == AppState::STREAMING && m_text_cb_) {
+            wchar_t wch = static_cast<wchar_t>(wp);
+            if (wch >= 32) {
+                std::string utf8 = wchar_to_utf8(wch);
+                if (!utf8.empty()) {
+                    m_text_cb_(utf8);
+                }
+                return 0;
+            }
+        }
+        break;
+    }
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL: {
+        if (app_state_ == AppState::STREAMING && m_scroll_cb_) {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(hwnd_, &pt);
+            if (PtInRect(&rect_phone_, pt)) {
+                int delta = GET_WHEEL_DELTA_WPARAM(wp);
+                float scroll_val = static_cast<float>(delta) / 120.0f;
+                int rx = pt.x - rect_phone_.left;
+                int ry = pt.y - rect_phone_.top;
+                int rw = rect_phone_.right - rect_phone_.left;
+                int rh = rect_phone_.bottom - rect_phone_.top;
+                
+                if (msg == WM_MOUSEWHEEL) {
+                    m_scroll_cb_(rx, ry, rw, rh, 0.0f, scroll_val);
+                } else {
+                    m_scroll_cb_(rx, ry, rw, rh, scroll_val, 0.0f);
+                }
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_VIDEO_RENDER:
         // Cave man render direct on child window — coordinates relative to child!
         if (app_state_ == AppState::STREAMING && m_render_cb_ && m_sdl_renderer) {
@@ -675,11 +789,20 @@ void Win32Window::show_context_menu(POINT pt) {
     constexpr UINT ID_FACTORY_RESET = 1001;
     constexpr UINT ID_TOGGLE_FPS    = 1002;
     constexpr UINT ID_TOGGLE_RES    = 1003;
+    constexpr UINT ID_SET_PIN       = 1004;
+    constexpr UINT ID_UNLOCK_DEVICE = 1005;
+    constexpr UINT ID_TOGGLE_COMPAT = 1006;
 
     AppendMenuW(menu, MF_STRING, ID_TOGGLE_FPS,
         fps_limited_ ? L"\u2713  FPS begrenzen (30)" : L"    FPS begrenzen (30)");
     AppendMenuW(menu, MF_STRING, ID_TOGGLE_RES,
         resolution_limited_ ? L"\u2713  Aufloesung begrenzen (720p)" : L"    Aufloesung begrenzen (720p)");
+    AppendMenuW(menu, MF_STRING, ID_TOGGLE_COMPAT,
+        compatibility_mode_ ? L"\u2713  Kompatibilitaetsmodus (langsame PIN)" : L"    Kompatibilitaetsmodus (langsame PIN)");
+    AppendMenuW(menu, MF_STRING, ID_SET_PIN, L"    PIN zum Entsperren festlegen");
+    if (app_state_ == AppState::STREAMING) {
+        AppendMenuW(menu, MF_STRING, ID_UNLOCK_DEVICE, L"    Handy entsperren (Strg+U)");
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, ID_FACTORY_RESET, L"    Werkseinstellungen zuruecksetzen");
 
@@ -695,6 +818,9 @@ void Win32Window::show_context_menu(POINT pt) {
         case ID_FACTORY_RESET: action = MenuAction::FACTORY_RESET; break;
         case ID_TOGGLE_FPS:    action = MenuAction::TOGGLE_FPS_LIMIT; break;
         case ID_TOGGLE_RES:    action = MenuAction::TOGGLE_RESOLUTION_LIMIT; break;
+        case ID_TOGGLE_COMPAT: action = MenuAction::TOGGLE_COMPATIBILITY_MODE; break;
+        case ID_SET_PIN:       action = MenuAction::SET_PIN; break;
+        case ID_UNLOCK_DEVICE: action = MenuAction::UNLOCK_DEVICE; break;
         default: return;
     }
     if (menu_cb_) menu_cb_(action);

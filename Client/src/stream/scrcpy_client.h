@@ -40,6 +40,7 @@ public:
     bool is_running() const;
     int video_width() const { return static_cast<int>(initial_width_); }
     int video_height() const { return static_cast<int>(initial_height_); }
+    const std::string& get_device_id() const { return config_.device_id; }
 
     // Callbacks
     using FrameCallback = std::function<void(AVFrame* frame)>;
@@ -49,6 +50,7 @@ public:
     void inject_touch(int action, float x, float y, int w, int h);
     void inject_keycode(int action, int keycode);
     void inject_scroll(float x, float y, int w, int h, float hscroll, float vscroll);
+    void inject_text(const std::string& text);
 
 private:
     bool setup_tunnel();

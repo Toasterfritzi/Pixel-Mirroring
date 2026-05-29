@@ -21,6 +21,8 @@ public:
 
     bool create() override;
     void show() override;
+    void hide() override;
+    bool is_visible() const override;
     void process_messages() override;
     
     void set_aspect_ratio(double ratio) override;
@@ -30,14 +32,19 @@ public:
     void set_render_callback(std::function<void(SDL_Renderer*, int, int, int, int)> cb) override { m_render_cb_ = std::move(cb); }
     void set_video_viewport_callback(std::function<void(int, int, int, int)> cb) override;
     void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) override { m_pointer_cb_ = std::move(cb); }
+    void set_key_callback(std::function<void(int, int)> cb) override { m_key_cb_ = std::move(cb); }
+    void set_text_callback(std::function<void(const std::string&)> cb) override { m_text_cb_ = std::move(cb); }
+    void set_scroll_callback(std::function<void(int, int, int, int, float, float)> cb) override { m_scroll_cb_ = std::move(cb); }
     void set_app_state(AppState state) override;
     void set_status_text(const std::string& text) override;
     void set_start_callback(std::function<void()> cb) override { start_cb_ = std::move(cb); }
     void post_task(std::function<void()> task) override;
     
     void set_menu_callback(std::function<void(MenuAction)> cb) override { menu_cb_ = std::move(cb); }
+    void set_restore_callback(std::function<void()> cb) override { m_restore_cb_ = std::move(cb); }
     void set_fps_limited(bool limited) override { fps_limited_ = limited; }
     void set_resolution_limited(bool limited) override { resolution_limited_ = limited; }
+    void set_compatibility_mode(bool enabled) override { compatibility_mode_ = enabled; }
 
 private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -86,6 +93,7 @@ private:
     
     // State
     AppState app_state_{AppState::SETUP};
+    bool visible_{true};
     std::string status_text_;
     int scan_animation_frame_{0};
     
@@ -93,10 +101,15 @@ private:
     std::function<void(SDL_Renderer*, int, int, int, int)> m_render_cb_;
     std::function<void(int, int, int, int)> m_viewport_cb_;
     std::function<void(PointerAction, int, int, int, int)> m_pointer_cb_;
+    std::function<void(int, int)> m_key_cb_;
+    std::function<void(const std::string&)> m_text_cb_;
+    std::function<void(int, int, int, int, float, float)> m_scroll_cb_;
     std::function<void()> start_cb_;
     std::function<void(MenuAction)> menu_cb_;
+    std::function<void()> m_restore_cb_;
     bool fps_limited_{false};
     bool resolution_limited_{false};
+    bool compatibility_mode_{false};
 };
 
 } // namespace pm::window

@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MirroringService : Service() {
     companion object {
@@ -26,8 +27,35 @@ class MirroringService : Service() {
     private val adbWifiManager by lazy { AdbWifiManager(this) }
     private val clientStore by lazy { PairedClientStore(this) }
     private val pairingMutex = Mutex()
+    private val isScreenOn = AtomicBoolean(true)
+    private var receiverRegistered = false
+
+    private val screenStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
+                isScreenOn.set(false)
+                Log.i(TAG, "Screen went OFF")
+            } else if (intent?.action == android.content.Intent.ACTION_SCREEN_ON) {
+                isScreenOn.set(true)
+                Log.i(TAG, "Screen went ON")
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        val powerManager = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        isScreenOn.set(powerManager.isInteractive)
+        
+        val filter = android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_SCREEN_OFF)
+            addAction(android.content.Intent.ACTION_SCREEN_ON)
+        }
+        registerReceiver(screenStateReceiver, filter)
+        receiverRegistered = true
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "Starting MirroringService")
@@ -94,6 +122,14 @@ class MirroringService : Service() {
                 jsonResponse(response)
             }
 
+            request.method == "GET" && request.path == "/screen" -> {
+                HttpResponse(
+                    statusCode = 200,
+                    contentType = "application/json; charset=utf-8",
+                    body = "{\"screenOn\":${isScreenOn.get()}}"
+                )
+            }
+
             request.method == "POST" && request.path == "/connect" -> {
                 val connectRequest = json.decodeFromString<ConnectRequest>(request.body)
 
@@ -135,7 +171,7 @@ class MirroringService : Service() {
                 jsonResponse(response)
             }
 
-            request.path == "/ping" || request.path == "/status" || request.path == "/connect" -> {
+            request.path == "/ping" || request.path == "/status" || request.path == "/connect" || request.path == "/screen" -> {
                 HttpResponse(
                     statusCode = 405,
                     contentType = "text/plain; charset=utf-8",
@@ -176,6 +212,10 @@ class MirroringService : Service() {
     }
 
     override fun onDestroy() {
+        if (receiverRegistered) {
+            unregisterReceiver(screenStateReceiver)
+            receiverRegistered = false
+        }
         server?.close()
         server = null
         super.onDestroy()

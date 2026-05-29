@@ -1,6 +1,8 @@
 #include <thread>
 #include <random>
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -26,7 +28,10 @@
 #include "stream/video_renderer.h"
 #include "input/input_handler.h"
 #include "network/network_scanner.h"
+#include "tray/tray_interface.h"
 #include "settings.h"
+#include <httplib.h>
+#include <nlohmann/json.hpp>
 
 namespace {
 constexpr const char* ANDROID_PACKAGE = "dev.pixelmirroring.app";
@@ -61,6 +66,50 @@ std::string get_client_name() {
     env_name = std::getenv("HOSTNAME");
     if (env_name && env_name[0] != '\0') return env_name;
     return "Desktop-PC";
+}
+
+std::string prompt_user_for_pin() {
+    while (true) {
+#ifdef _WIN32
+        std::string command = "powershell -Command \"[void][System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic'); [Microsoft.VisualBasic.Interaction]::InputBox('PIN zum automatischen Entsperren eingeben (nur Ziffern):', 'PIN einrichten', '')\"";
+        FILE* pipe = _popen(command.c_str(), "r");
+#else
+        std::string command = "osascript -e 'display dialog \"PIN zum automatischen Entsperren eingeben (nur Ziffern):\" default answer \"\" with title \"PIN einrichten\"' -e 'text returned of result' 2>/dev/null";
+        FILE* pipe = popen(command.c_str(), "r");
+#endif
+        if (!pipe) return "";
+        char buffer[128];
+        std::string result = "";
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
+#ifdef _WIN32
+        _pclose(pipe);
+#else
+        pclose(pipe);
+#endif
+        while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t')) {
+            result.pop_back();
+        }
+
+        if (result.empty()) return "";
+
+        bool all_digits = true;
+        for (char c : result) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) {
+                all_digits = false;
+                break;
+            }
+        }
+
+        if (all_digits && result.length() <= 16) {
+            return result;
+        }
+
+#ifdef _WIN32
+        MessageBoxA(nullptr, "PIN darf nur aus Ziffern bestehen und maximal 16 Zeichen lang sein.", "Ungueltige Eingabe", MB_OK | MB_ICONERROR);
+#endif
+    }
 }
 
 bool path_exists(const std::filesystem::path& path) {
@@ -202,6 +251,8 @@ bool start_stream(
     pm::input::InputHandler& input,
     const std::string& device_id
 );
+
+void unlock_device_if_needed(const std::string& device_id);
 
 std::optional<pm::adb::Device> wait_for_usb_authorization(
     pm::adb::AdbClient& adb,
@@ -383,6 +434,7 @@ bool run_first_time_setup(
         window.set_status_text("Verbunden: " + device_ip);
     });
     std::this_thread::sleep_for(std::chrono::seconds(1));
+    unlock_device_if_needed(tcp_device->id);
     if (!start_stream(window, scrcpy, renderer, input, tcp_device->id)) {
         clear_setup_state();
         return false;
@@ -462,10 +514,81 @@ bool start_stream(
     });
     return true;
 }
+
+void unlock_device_if_needed(const std::string& device_id) {
+    pm::Settings settings = pm::load_settings();
+    if (settings.m_pin.empty()) return;
+    
+    pm::adb::AdbClient adb;
+    
+    // Cave man check if phone already open
+    std::string trust_state = adb.execute_shell_command(device_id, "dumpsys trust");
+    size_t current_pos = trust_state.find("(current):");
+    if (current_pos != std::string::npos) {
+        size_t line_end = trust_state.find("\n", current_pos);
+        std::string current_user_line = (line_end == std::string::npos)
+            ? trust_state.substr(current_pos)
+            : trust_state.substr(current_pos, line_end - current_pos);
+        if (current_user_line.find("deviceLocked=0") != std::string::npos) {
+            // Cave man see screen already open, do not key smash!
+            return;
+        }
+    }
+    
+    // Cave man determine delays. Default is 0ms, compat mode is wakeup=400ms, fingerprint=800ms
+    int wakeup_delay = 0;
+    int fingerprint_delay = 0;
+    if (settings.m_compatibility_mode) {
+        wakeup_delay = 400;
+        fingerprint_delay = 800;
+    }
+    
+    // Cave man wake screen
+    adb.execute_shell_command(device_id, "input keyevent 224");
+    if (wakeup_delay > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(wakeup_delay));
+    }
+    
+    // Cave man hit ENTER to dismiss fingerprint, show PIN pad
+    adb.execute_shell_command(device_id, "input keyevent 66");
+    if (fingerprint_delay > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(fingerprint_delay));
+    }
+    
+    // Cave man blast all PIN digits and final ENTER fast in one single stone throw
+    std::string pin_command = "input keyevent";
+    for (char c : settings.m_pin) {
+        int keycode = 7 + (c - '0');
+        pin_command += " " + std::to_string(keycode);
+    }
+    pin_command += " 66"; // Confirm PIN
+    adb.execute_shell_command(device_id, pin_command);
+    
+    // Cave man wait for unlock animation
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+}
+
 }
 
 static int app_main() {
 #ifdef _WIN32
+    // Cave man check for single instance!
+    HANDLE mutex = CreateMutexA(nullptr, TRUE, "PixelMirroringSingleInstanceMutex");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND existing_hwnd = FindWindowA("PixelMirroringWindowClass", nullptr);
+        if (existing_hwnd) {
+            UINT restore_msg = RegisterWindowMessageA("PixelMirroringRestoreMsg");
+            PostMessageA(existing_hwnd, restore_msg, 0, 0);
+            
+            if (IsIconic(existing_hwnd)) {
+                ShowWindow(existing_hwnd, SW_RESTORE);
+            }
+            SetForegroundWindow(existing_hwnd);
+        }
+        CloseHandle(mutex);
+        return 0;
+    }
+
     SetProcessDPIAware();
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
@@ -479,6 +602,9 @@ static int app_main() {
 #endif
         return 1;
     }
+
+    auto tray = pm::tray::create_tray();
+
     window->set_aspect_ratio(340.0 / 604.0);
     window->set_app_state(pm::window::AppState::SETUP);
     window->set_status_text("");
@@ -487,6 +613,12 @@ static int app_main() {
     pm::Settings initial_settings = pm::load_settings();
     window->set_fps_limited(initial_settings.max_fps == 30);
     window->set_resolution_limited(initial_settings.max_size == 720);
+    window->set_compatibility_mode(initial_settings.m_compatibility_mode);
+
+    std::atomic<bool> should_stop{false};
+    pm::stream::ScrcpyClient scrcpy;
+    pm::stream::VideoRenderer renderer;
+    pm::input::InputHandler input(&scrcpy);
 
     // MEOW. WIRE CONTEXT MENU CALLBACK.
     window->set_menu_callback([&](pm::window::MenuAction action) {
@@ -514,21 +646,121 @@ static int app_main() {
                 window->set_resolution_limited(current_settings.max_size == 720);
                 break;
             }
+            case pm::window::MenuAction::TOGGLE_COMPATIBILITY_MODE: {
+                current_settings.m_compatibility_mode = !current_settings.m_compatibility_mode;
+                pm::save_settings(current_settings);
+                window->set_compatibility_mode(current_settings.m_compatibility_mode);
+                break;
+            }
+            case pm::window::MenuAction::SET_PIN: {
+                std::string new_pin = prompt_user_for_pin();
+                if (!new_pin.empty()) {
+                    current_settings.m_pin = new_pin;
+                    pm::save_settings(current_settings);
+                    window->set_status_text("PIN erfolgreich gespeichert.");
+                } else {
+#ifdef _WIN32
+                    int answer = MessageBoxA(
+                        (HWND)window->get_native_handle(),
+                        "Moechtest du die gespeicherte PIN loeschen?",
+                        "PIN loeschen",
+                        MB_YESNO | MB_ICONQUESTION
+                    );
+                    if (answer == IDYES) {
+                        current_settings.m_pin = "";
+                        pm::save_settings(current_settings);
+                        window->set_status_text("PIN geloescht.");
+                    }
+#else
+                    current_settings.m_pin = "";
+                    pm::save_settings(current_settings);
+                    window->set_status_text("PIN geloescht.");
+#endif
+                }
+                break;
+            }
+            case pm::window::MenuAction::UNLOCK_DEVICE: {
+                if (current_settings.m_pin.empty()) {
+                    window->set_status_text("PIN nicht eingerichtet.");
+                    break;
+                }
+                if (!scrcpy.is_running()) {
+                    break;
+                }
+                std::string device_id = scrcpy.get_device_id();
+                if (device_id.empty()) {
+                    break;
+                }
+                std::thread([device_id]() {
+                    unlock_device_if_needed(device_id);
+                }).detach();
+                break;
+            }
         }
     });
 
-    std::atomic<bool> should_stop{false};
-    pm::stream::ScrcpyClient scrcpy;
-    pm::stream::VideoRenderer renderer;
-    pm::input::InputHandler input(&scrcpy);
+    auto do_restore = [&]() {
+        window->post_task([&]() {
+            if (!window->is_visible()) {
+                window->show();
+                if (tray) {
+                    tray->hide();
+                }
+            }
+#ifdef _WIN32
+            HWND hw = (HWND)window->get_native_handle();
+            if (IsIconic(hw)) ShowWindow(hw, SW_RESTORE);
+            SetForegroundWindow(hw);
+#endif
+            // Cave man wake and unlock phone on restore
+            if (scrcpy.is_running()) {
+                std::string device_id = scrcpy.get_device_id();
+                if (!device_id.empty()) {
+                    std::thread([device_id]() {
+                        unlock_device_if_needed(device_id);
+                    }).detach();
+                }
+            }
+        });
+    };
+
+    window->set_restore_callback(do_restore);
+
+    if (tray) {
+        if (!tray->create("Pixel Mirroring", do_restore)) {
+#ifdef _WIN32
+            MessageBoxA(nullptr, "Tray-Icon konnte nicht erstellt werden.", "Fehler", MB_OK | MB_ICONERROR);
+#endif
+            tray.reset();
+        }
+    }
+
     window->set_video_viewport_callback([&](int x, int y, int w, int h) {
         renderer.update_viewport(x, y, w, h);
     });
     window->set_pointer_callback([&](pm::window::PointerAction action, int x, int y, int w, int h) {
         input.handle_pointer(action, x, y, w, h);
     });
+    window->set_key_callback([&](int action, int keycode) {
+        // key down/up. cave man click keys.
+        if (action == 0) {
+            input.handle_key_down(keycode);
+        } else {
+            input.handle_key_up(keycode);
+        }
+    });
+    window->set_text_callback([&](const std::string& text) {
+        // text write. cave man write words.
+        input.handle_text(text);
+    });
+    window->set_scroll_callback([&](int x, int y, int w, int h, float hscroll, float vscroll) {
+        // scroll wheel. cave man scroll screen.
+        input.handle_scroll(x, y, w, h, hscroll, vscroll);
+    });
     std::thread connection_thread;
     std::atomic<bool> connection_running{false};
+    std::thread screen_poll_thread;
+    std::atomic<bool> stop_screen_poll{false};
     const std::string client_name = get_client_name();
 
     std::string client_id;
@@ -553,6 +785,12 @@ static int app_main() {
 
     auto start_connection = [&](bool automatic) {
         if (connection_running) return;
+        
+        stop_screen_poll = true;
+        if (screen_poll_thread.joinable()) {
+            screen_poll_thread.join();
+        }
+
         if (connection_thread.joinable()) {
             connection_thread.join();
         }
@@ -596,7 +834,61 @@ static int app_main() {
                 w->set_status_text(name.empty() ? "Verbunden" : name);
             });
             std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (!start_stream(*window, scrcpy, renderer, input, tcp_device->id) && !should_stop) {
+            unlock_device_if_needed(tcp_device->id);
+            if (start_stream(*window, scrcpy, renderer, input, tcp_device->id)) {
+                // Parse IP from device ID (e.g. 192.168.1.100:5555)
+                std::string device_ip = tcp_device->id;
+                auto pos = device_ip.find(':');
+                if (pos != std::string::npos) {
+                    device_ip = device_ip.substr(0, pos);
+                }
+
+                stop_screen_poll = false;
+                if (screen_poll_thread.joinable()) {
+                    screen_poll_thread.join();
+                }
+
+                screen_poll_thread = std::thread([&, device_ip]() {
+                    httplib::Client cli(device_ip, 18294);
+                    cli.set_connection_timeout(1, 0); // 1s
+                    cli.set_read_timeout(1, 500000);   // 1.5s
+                    
+                    bool last_screen_on = true;
+                    
+                    while (!should_stop && !stop_screen_poll && scrcpy.is_running()) {
+                        auto res = cli.Get("/screen");
+                        if (res && res->status == 200) {
+                            try {
+                                auto resp_json = nlohmann::json::parse(res->body);
+                                bool screen_on = resp_json["screenOn"].get<bool>();
+                                if (screen_on != last_screen_on) {
+                                    last_screen_on = screen_on;
+                                    window->post_task([&, screen_on]() {
+                                        if (!screen_on) {
+                                            if (window->is_visible()) {
+                                                window->hide();
+                                                if (tray) tray->show();
+                                            }
+                                        } else {
+                                            if (!window->is_visible()) {
+                                                window->show();
+                                                if (tray) tray->hide();
+                                            }
+                                        }
+                                    });
+                                }
+                            } catch (...) {
+                                // Ignore JSON parse error
+                            }
+                        }
+                        
+                        // Sleep 1 second before next poll (using 10x 100ms sleep for responsiveness to stop request)
+                        for (int i = 0; i < 10 && !should_stop && !stop_screen_poll && scrcpy.is_running(); ++i) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        }
+                    }
+                });
+            } else if (!should_stop) {
                 window->post_task([w = window.get()]() {
                     w->set_app_state(pm::window::AppState::SCANNING);
                     w->set_status_text("Stream fehlgeschlagen.");
@@ -618,11 +910,15 @@ static int app_main() {
     window->process_messages();
 
     should_stop = true;
+    stop_screen_poll = true;
     scrcpy.stop();
     if (connection_thread.joinable()) connection_thread.join();
+    if (screen_poll_thread.joinable()) screen_poll_thread.join();
+    if (tray) tray->hide();
 
 #ifdef _WIN32
     Gdiplus::GdiplusShutdown(gdiplusToken);
+    CloseHandle(mutex);
 #endif
     return 0;
 }

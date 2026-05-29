@@ -16,6 +16,8 @@ public:
     void handle_mouse_move(int x, int y, int window_w, int window_h);
     void handle_key_down(int keycode);
     void handle_key_up(int keycode);
+    void handle_scroll(int x, int y, int window_w, int window_h, float hscroll, float vscroll);
+    void handle_text(const std::string& text);
     
 private:
     void window_to_device(int wx, int wy, int ww, int wh, int* dx, int* dy);
