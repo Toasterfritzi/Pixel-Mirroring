@@ -67,13 +67,13 @@ public:
     // Set pointer callback. Handle click and drag in video.
     virtual void set_pointer_callback(std::function<void(PointerAction, int, int, int, int)> cb) = 0;
     
-    // Set key callback. Handle physical keyboard key down and up.
+    // Set key callback. Cave man tap physical keys. Params: action (0 = down, 1 = up), keycode.
     virtual void set_key_callback(std::function<void(int, int)> cb) = 0;
 
-    // Set text callback. Handle text input.
+    // Set text callback. Cave man write words. Params: text.
     virtual void set_text_callback(std::function<void(const std::string&)> cb) = 0;
 
-    // Set scroll callback. Handle mouse scroll wheel events.
+    // Set scroll callback. Cave man scroll screen. Params: x, y, w, h, hscroll, vscroll.
     virtual void set_scroll_callback(std::function<void(int, int, int, int, float, float)> cb) = 0;
     
     
@@ -89,6 +89,9 @@ public:
 
     // Set a callback for context menu actions
     virtual void set_menu_callback(std::function<void(MenuAction)> cb) = 0;
+
+    // Set a callback for when the window is restored from another instance
+    virtual void set_restore_callback(std::function<void()> cb) = 0;
 
     // Set checkbox states on the menu options from outside
     virtual void set_fps_limited(bool limited) = 0;

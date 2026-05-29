@@ -9,7 +9,7 @@ struct Settings {
     int max_fps = 60;       // 60 = unlocked, 30 = limited
     int max_size = 0;       // 0 = full resolution, 720 = 720p
     std::string m_pin = ""; // Saved PIN. Encrypted on Windows.
-    bool compatibility_mode = false; // Compatibility mode for slow PIN unlock
+    bool m_compatibility_mode = false; // CAVE MAN USE SLOW PIN UNLOCK COMPATIBILITY.
 };
 
 Settings load_settings();

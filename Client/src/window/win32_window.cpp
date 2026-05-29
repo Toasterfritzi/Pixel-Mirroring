@@ -543,6 +543,14 @@ LRESULT CALLBACK Win32Window::window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 }
 
 LRESULT Win32Window::handle_message(UINT msg, WPARAM wp, LPARAM lp) {
+    static UINT restore_msg = RegisterWindowMessageA("PixelMirroringRestoreMsg");
+    if (msg == restore_msg) {
+        if (m_restore_cb_) {
+            m_restore_cb_();
+        }
+        return 0;
+    }
+
     switch (msg) {
     case WM_NCCALCSIZE:
         // Cave man remove window frame — no border artifacts

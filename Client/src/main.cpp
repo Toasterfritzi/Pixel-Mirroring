@@ -538,7 +538,7 @@ void unlock_device_if_needed(const std::string& device_id) {
     // Cave man determine delays. Default is 0ms, compat mode is wakeup=400ms, fingerprint=800ms
     int wakeup_delay = 0;
     int fingerprint_delay = 0;
-    if (settings.compatibility_mode) {
+    if (settings.m_compatibility_mode) {
         wakeup_delay = 400;
         fingerprint_delay = 800;
     }
@@ -572,6 +572,23 @@ void unlock_device_if_needed(const std::string& device_id) {
 
 static int app_main() {
 #ifdef _WIN32
+    // Cave man check for single instance!
+    HANDLE mutex = CreateMutexA(nullptr, TRUE, "PixelMirroringSingleInstanceMutex");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND existing_hwnd = FindWindowA("PixelMirroringWindowClass", nullptr);
+        if (existing_hwnd) {
+            UINT restore_msg = RegisterWindowMessageA("PixelMirroringRestoreMsg");
+            PostMessageA(existing_hwnd, restore_msg, 0, 0);
+            
+            if (IsIconic(existing_hwnd)) {
+                ShowWindow(existing_hwnd, SW_RESTORE);
+            }
+            SetForegroundWindow(existing_hwnd);
+        }
+        CloseHandle(mutex);
+        return 0;
+    }
+
     SetProcessDPIAware();
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
@@ -596,7 +613,7 @@ static int app_main() {
     pm::Settings initial_settings = pm::load_settings();
     window->set_fps_limited(initial_settings.max_fps == 30);
     window->set_resolution_limited(initial_settings.max_size == 720);
-    window->set_compatibility_mode(initial_settings.compatibility_mode);
+    window->set_compatibility_mode(initial_settings.m_compatibility_mode);
 
     std::atomic<bool> should_stop{false};
     pm::stream::ScrcpyClient scrcpy;
@@ -630,9 +647,9 @@ static int app_main() {
                 break;
             }
             case pm::window::MenuAction::TOGGLE_COMPATIBILITY_MODE: {
-                current_settings.compatibility_mode = !current_settings.compatibility_mode;
+                current_settings.m_compatibility_mode = !current_settings.m_compatibility_mode;
                 pm::save_settings(current_settings);
-                window->set_compatibility_mode(current_settings.compatibility_mode);
+                window->set_compatibility_mode(current_settings.m_compatibility_mode);
                 break;
             }
             case pm::window::MenuAction::SET_PIN: {
@@ -682,26 +699,35 @@ static int app_main() {
         }
     });
 
-    if (tray) {
-        if (!tray->create("Pixel Mirroring", [&]() {
-            window->post_task([&]() {
-                if (!window->is_visible()) {
-                    window->show();
-                    if (tray) {
-                        tray->hide();
-                        // Cave man wake and unlock phone on restore
-                        if (scrcpy.is_running()) {
-                            std::string device_id = scrcpy.get_device_id();
-                            if (!device_id.empty()) {
-                                std::thread([device_id]() {
-                                    unlock_device_if_needed(device_id);
-                                }).detach();
-                            }
-                        }
-                    }
+    auto do_restore = [&]() {
+        window->post_task([&]() {
+            if (!window->is_visible()) {
+                window->show();
+                if (tray) {
+                    tray->hide();
                 }
-            });
-        })) {
+            }
+#ifdef _WIN32
+            HWND hw = (HWND)window->get_native_handle();
+            if (IsIconic(hw)) ShowWindow(hw, SW_RESTORE);
+            SetForegroundWindow(hw);
+#endif
+            // Cave man wake and unlock phone on restore
+            if (scrcpy.is_running()) {
+                std::string device_id = scrcpy.get_device_id();
+                if (!device_id.empty()) {
+                    std::thread([device_id]() {
+                        unlock_device_if_needed(device_id);
+                    }).detach();
+                }
+            }
+        });
+    };
+
+    window->set_restore_callback(do_restore);
+
+    if (tray) {
+        if (!tray->create("Pixel Mirroring", do_restore)) {
 #ifdef _WIN32
             MessageBoxA(nullptr, "Tray-Icon konnte nicht erstellt werden.", "Fehler", MB_OK | MB_ICONERROR);
 #endif
@@ -892,6 +918,7 @@ static int app_main() {
 
 #ifdef _WIN32
     Gdiplus::GdiplusShutdown(gdiplusToken);
+    CloseHandle(mutex);
 #endif
     return 0;
 }

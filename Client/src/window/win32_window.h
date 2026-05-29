@@ -41,6 +41,7 @@ public:
     void post_task(std::function<void()> task) override;
     
     void set_menu_callback(std::function<void(MenuAction)> cb) override { menu_cb_ = std::move(cb); }
+    void set_restore_callback(std::function<void()> cb) override { m_restore_cb_ = std::move(cb); }
     void set_fps_limited(bool limited) override { fps_limited_ = limited; }
     void set_resolution_limited(bool limited) override { resolution_limited_ = limited; }
     void set_compatibility_mode(bool enabled) override { compatibility_mode_ = enabled; }
@@ -105,6 +106,7 @@ private:
     std::function<void(int, int, int, int, float, float)> m_scroll_cb_;
     std::function<void()> start_cb_;
     std::function<void(MenuAction)> menu_cb_;
+    std::function<void()> m_restore_cb_;
     bool fps_limited_{false};
     bool resolution_limited_{false};
     bool compatibility_mode_{false};
