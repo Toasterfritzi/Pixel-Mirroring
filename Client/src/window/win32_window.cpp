@@ -455,36 +455,7 @@ void Win32Window::draw_setup_screen(Gdiplus::Graphics& g) {
 }
 
 void Win32Window::draw_scanning_screen(Gdiplus::Graphics& g) {
-    Gdiplus::StringFormat sf;
-    sf.SetAlignment(Gdiplus::StringAlignmentCenter);
-    sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-
-    float pw = (float)(rect_phone_.right - rect_phone_.left);
-    float ph = (float)(rect_phone_.bottom - rect_phone_.top);
-    float px = (float)rect_phone_.left;
-    float py = (float)rect_phone_.top;
-    float cy = py + ph * 0.4f;
-
-    // Scanning dots animation
-    scan_animation_frame_++;
-    int dots = (scan_animation_frame_ / 15) % 4;
-    std::wstring anim = L"Suche Ger\xE4t";
-    for (int i = 0; i < dots; i++) anim += L".";
-
-    Gdiplus::FontFamily uiFF(L"Segoe UI");
-    Gdiplus::Font f(&uiFF, 13, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-    Gdiplus::SolidBrush white(Gdiplus::Color(255, 200, 200, 200));
-    Gdiplus::RectF r(px, cy, pw, 30);
-    g.DrawString(anim.c_str(), -1, &f, r, &sf, &white);
-
-    // Status text
-    if (!status_text_.empty()) {
-        Gdiplus::Font sf2(&uiFF, 8, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-        Gdiplus::SolidBrush gray(Gdiplus::Color(255, 120, 120, 120));
-        std::wstring ws(status_text_.begin(), status_text_.end());
-        Gdiplus::RectF sr(px + 10, cy + 40, pw - 20, 60);
-        g.DrawString(ws.c_str(), -1, &sf2, sr, &sf, &gray);
-    }
+    draw_connected_screen(g);
 }
 
 void Win32Window::draw_connected_screen(Gdiplus::Graphics& g) {
@@ -496,18 +467,33 @@ void Win32Window::draw_connected_screen(Gdiplus::Graphics& g) {
     float ph = (float)(rect_phone_.bottom - rect_phone_.top);
     float px = (float)rect_phone_.left;
     float py = (float)rect_phone_.top;
+    float cy = py + ph * 0.45f;
+
+    scan_animation_frame_++;
+    
+    // Modern spinner
+    float radius = 24.0f;
+    Gdiplus::RectF arcRect(px + pw / 2.0f - radius, cy - radius - 30.0f, radius * 2.0f, radius * 2.0f);
+    
+    Gdiplus::Pen bgPen(Gdiplus::Color(255, 40, 40, 40), 4.0f);
+    g.DrawEllipse(&bgPen, arcRect);
+    
+    float angle = fmodf((float)scan_animation_frame_ * 5.0f, 360.0f);
+    Gdiplus::Pen spinnerPen(Gdiplus::Color(255, 60, 150, 255), 4.0f);
+    spinnerPen.SetLineCap(Gdiplus::LineCapRound, Gdiplus::LineCapRound, Gdiplus::DashCapRound);
+    g.DrawArc(&spinnerPen, arcRect, angle - 90.0f, 120.0f);
 
     Gdiplus::FontFamily uiFF(L"Segoe UI");
-    Gdiplus::Font f(&uiFF, 13, Gdiplus::FontStyleBold, Gdiplus::UnitPoint);
-    Gdiplus::SolidBrush green(Gdiplus::Color(255, 80, 200, 120));
-    Gdiplus::RectF r(px, py + ph * 0.35f, pw, 30);
-    g.DrawString(L"\u2713 Verbunden!", -1, &f, r, &sf, &green);
+    Gdiplus::Font f(&uiFF, 12, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+    Gdiplus::SolidBrush white(Gdiplus::Color(255, 230, 230, 230));
+    Gdiplus::RectF r(px, cy + 10.0f, pw, 30);
+    g.DrawString(L"Verbindung wird hergestellt...", -1, &f, r, &sf, &white);
 
     if (!status_text_.empty()) {
         Gdiplus::Font sf2(&uiFF, 9, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-        Gdiplus::SolidBrush gray(Gdiplus::Color(255, 160, 160, 160));
+        Gdiplus::SolidBrush gray(Gdiplus::Color(255, 140, 140, 140));
         std::wstring ws(status_text_.begin(), status_text_.end());
-        Gdiplus::RectF sr(px, py + ph * 0.45f, pw, 30);
+        Gdiplus::RectF sr(px + 10.0f, cy + 40.0f, pw - 20.0f, 60.0f);
         g.DrawString(ws.c_str(), -1, &sf2, sr, &sf, &gray);
     }
 }
@@ -517,13 +503,30 @@ void Win32Window::draw_streaming_screen(Gdiplus::Graphics& g) {
         Gdiplus::StringFormat sf;
         sf.SetAlignment(Gdiplus::StringAlignmentCenter);
         sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
         float pw = (float)(rect_phone_.right - rect_phone_.left);
         float ph = (float)(rect_phone_.bottom - rect_phone_.top);
+        float px = (float)rect_phone_.left;
+        float py = (float)rect_phone_.top;
+        float cy = py + ph * 0.45f;
+
+        scan_animation_frame_++;
+        float radius = 24.0f;
+        Gdiplus::RectF arcRect(px + pw / 2.0f - radius, cy - radius - 30.0f, radius * 2.0f, radius * 2.0f);
+        
+        Gdiplus::Pen bgPen(Gdiplus::Color(255, 40, 40, 40), 4.0f);
+        g.DrawEllipse(&bgPen, arcRect);
+        
+        float angle = fmodf((float)scan_animation_frame_ * 5.0f, 360.0f);
+        Gdiplus::Pen spinnerPen(Gdiplus::Color(255, 60, 150, 255), 4.0f);
+        spinnerPen.SetLineCap(Gdiplus::LineCapRound, Gdiplus::LineCapRound, Gdiplus::DashCapRound);
+        g.DrawArc(&spinnerPen, arcRect, angle - 90.0f, 120.0f);
+
         Gdiplus::FontFamily uiFF(L"Segoe UI");
-        Gdiplus::Font f(&uiFF, 10, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-        Gdiplus::SolidBrush gray(Gdiplus::Color(255, 160, 160, 160));
-        Gdiplus::RectF r((float)rect_phone_.left, (float)rect_phone_.top, pw, ph);
-        g.DrawString(L"Warte auf Video-Stream...", -1, &f, r, &sf, &gray);
+        Gdiplus::Font f(&uiFF, 12, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+        Gdiplus::SolidBrush white(Gdiplus::Color(255, 230, 230, 230));
+        Gdiplus::RectF r(px, cy + 10.0f, pw, 30);
+        g.DrawString(L"Bildschirm wird geladen...", -1, &f, r, &sf, &white);
     }
 }
 
