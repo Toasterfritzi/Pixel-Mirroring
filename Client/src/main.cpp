@@ -750,6 +750,8 @@ static int app_main() {
         }
     });
 
+    std::function<void(bool)> start_connection;
+
     auto do_restore = [&]() {
         window->post_task([&]() {
             if (!window->is_visible()) {
@@ -771,6 +773,10 @@ static int app_main() {
                         unlock_device_if_needed(device_id, w);
                     }).detach();
                 }
+            } else {
+                window->set_app_state(pm::window::AppState::SCANNING);
+                window->set_status_text("Starte neue Verbindung...");
+                start_connection(true);
             }
         });
     };
@@ -834,7 +840,7 @@ static int app_main() {
         if (fw) { fputs(client_id.c_str(), fw); fclose(fw); }
     }
 
-    auto start_connection = [&](bool automatic) {
+    start_connection = [&](bool automatic) {
         if (connection_running) return;
         
         stop_screen_poll = true;
@@ -915,38 +921,24 @@ static int app_main() {
                         if (display_state.find("OFF") != std::string::npos) {
                             screen_on = false;
                         }
-                        
                         if (screen_on != last_screen_on) {
                             last_screen_on = screen_on;
-                            window->post_task([&, screen_on]() {
-                                if (!screen_on) {
+                            
+                            if (!screen_on) {
+                                window->post_task([&]() {
                                     // Cave man hide window to tray when phone screen off — no black screen!
                                     if (window->is_visible()) {
                                         window->hide();
                                         if (tray) tray->show();
                                     }
-                                } else {
-                                    // Cave man restore from tray when phone screen back on
-                                    if (!window->is_visible()) {
-                                        window->show();
-                                        if (tray) tray->hide();
-                                    }
-#ifdef _WIN32
-                                    HWND hw = (HWND)window->get_native_handle();
-                                    if (IsIconic(hw)) ShowWindow(hw, SW_RESTORE);
-                                    SetForegroundWindow(hw);
-#endif
-                                    // Cave man wake and unlock phone on screen restore
-                                    if (scrcpy.is_running()) {
-                                        std::string dev_id = scrcpy.get_device_id();
-                                        if (!dev_id.empty()) {
-                                            std::thread([dev_id, w = window.get()]() {
-                                                unlock_device_if_needed(dev_id, w);
-                                            }).detach();
-                                        }
-                                    }
+                                    window->set_app_state(pm::window::AppState::SETUP);
+                                });
+                                // Cave man stop everything to save battery when screen off
+                                if (scrcpy.is_running()) {
+                                    scrcpy.stop();
                                 }
-                            });
+                                break; // Kill the poll thread entirely! Fully disconnected.
+                            }
                         }
                         
                         // Cave man sleep 500ms before next poll
