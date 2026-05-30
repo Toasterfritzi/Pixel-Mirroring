@@ -45,6 +45,7 @@ public:
     void set_fps_limited(bool limited) override { fps_limited_ = limited; }
     void set_resolution_limited(bool limited) override { resolution_limited_ = limited; }
     void set_compatibility_mode(bool enabled) override { compatibility_mode_ = enabled; }
+    void set_lowest_brightness(bool enabled) override { lowest_brightness_ = enabled; }
 
 private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -110,6 +111,7 @@ private:
     bool fps_limited_{false};
     bool resolution_limited_{false};
     bool compatibility_mode_{false};
+    bool lowest_brightness_{true};
 };
 
 } // namespace pm::window

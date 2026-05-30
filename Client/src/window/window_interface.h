@@ -27,7 +27,9 @@ enum class MenuAction {
     TOGGLE_RESOLUTION_LIMIT,
     SET_PIN,
     UNLOCK_DEVICE,
-    TOGGLE_COMPATIBILITY_MODE
+    LOCK_DEVICE,
+    TOGGLE_COMPATIBILITY_MODE,
+    TOGGLE_LOWEST_BRIGHTNESS
 };
 
 class IWindow {
@@ -97,6 +99,7 @@ public:
     virtual void set_fps_limited(bool limited) = 0;
     virtual void set_resolution_limited(bool limited) = 0;
     virtual void set_compatibility_mode(bool enabled) = 0;
+    virtual void set_lowest_brightness(bool enabled) = 0;
 };
 
 // Factory function to create the appropriate window implementation for the current OS.

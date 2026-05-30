@@ -44,6 +44,43 @@ struct SetupState {
     std::string device_name;
 };
 
+// Cave man remember sun brightness before making screen dark
+struct SavedBrightness {
+    int brightness = -1;           // -1 = not saved
+    int brightness_mode = -1;      // -1 = not saved, 0 = manual, 1 = auto
+    std::string device_id;         // which phone this belong to
+};
+
+// Cave man read sun level from phone before smashing it to zero
+SavedBrightness read_brightness(pm::adb::AdbClient& adb, const std::string& device_id) {
+    SavedBrightness saved;
+    saved.device_id = device_id;
+
+    std::string brightness_str = adb.execute_shell_command(
+        device_id, "settings get system screen_brightness");
+    brightness_str.erase(brightness_str.find_last_not_of(" \n\r\t") + 1);
+    try { saved.brightness = std::stoi(brightness_str); } catch (...) {}
+
+    std::string mode_str = adb.execute_shell_command(
+        device_id, "settings get system screen_brightness_mode");
+    mode_str.erase(mode_str.find_last_not_of(" \n\r\t") + 1);
+    try { saved.brightness_mode = std::stoi(mode_str); } catch (...) {}
+
+    return saved;
+}
+
+// Cave man put sun brightness back to old level
+void restore_brightness(pm::adb::AdbClient& adb, const SavedBrightness& saved) {
+    if (saved.device_id.empty() || saved.brightness < 0) return;
+
+    if (saved.brightness_mode >= 0) {
+        adb.execute_shell_command(saved.device_id,
+            "settings put system screen_brightness_mode " + std::to_string(saved.brightness_mode));
+    }
+    adb.execute_shell_command(saved.device_id,
+        "settings put system screen_brightness " + std::to_string(saved.brightness));
+}
+
 class ScopeExit {
 public:
     explicit ScopeExit(std::function<void()> fn) : fn_(std::move(fn)) {}
@@ -249,10 +286,11 @@ bool start_stream(
     pm::stream::ScrcpyClient& scrcpy,
     pm::stream::VideoRenderer& renderer,
     pm::input::InputHandler& input,
-    const std::string& device_id
+    const std::string& device_id,
+    SavedBrightness* out_saved_brightness
 );
 
-void unlock_device_if_needed(const std::string& device_id);
+bool unlock_device_if_needed(const std::string& device_id, pm::window::IWindow* window = nullptr);
 
 std::optional<pm::adb::Device> wait_for_usb_authorization(
     pm::adb::AdbClient& adb,
@@ -328,7 +366,8 @@ bool run_first_time_setup(
     pm::stream::ScrcpyClient& scrcpy,
     pm::stream::VideoRenderer& renderer,
     pm::input::InputHandler& input,
-    std::atomic<bool>& should_stop
+    std::atomic<bool>& should_stop,
+    SavedBrightness* out_saved_brightness
 ) {
     clear_setup_state();
 
@@ -434,8 +473,18 @@ bool run_first_time_setup(
         window.set_status_text("Verbunden: " + device_ip);
     });
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    unlock_device_if_needed(tcp_device->id);
-    if (!start_stream(window, scrcpy, renderer, input, tcp_device->id)) {
+    if (!unlock_device_if_needed(tcp_device->id, &window)) {
+        clear_setup_state();
+        window.post_task([&window]() {
+#ifdef _WIN32
+            PostMessageA((HWND)window.get_native_handle(), WM_CLOSE, 0, 0);
+#else
+            exit(0);
+#endif
+        });
+        return false;
+    }
+    if (!start_stream(window, scrcpy, renderer, input, tcp_device->id, out_saved_brightness)) {
         clear_setup_state();
         return false;
     }
@@ -464,7 +513,8 @@ bool start_stream(
     pm::stream::ScrcpyClient& scrcpy,
     pm::stream::VideoRenderer& renderer,
     pm::input::InputHandler& input,
-    const std::string& device_id
+    const std::string& device_id,
+    SavedBrightness* out_saved_brightness
 ) {
     window.post_task([&window]() { window.set_status_text("Starte Video-Stream..."); });
     pm::stream::ScrcpyClient::Config config;
@@ -474,6 +524,17 @@ bool start_stream(
     pm::Settings settings = pm::load_settings();
     config.max_fps = settings.max_fps;
     config.max_size = settings.max_size;
+    config.lowest_brightness = settings.m_lowest_brightness;
+
+    if (settings.m_lowest_brightness) {
+        // CAVE MAN DECREASE SUN SHINE SO SMARTPHONE SCREEN IS DARKEST SHADE OF GREY
+        pm::adb::AdbClient adb;
+        if (out_saved_brightness && out_saved_brightness->brightness < 0) {
+            *out_saved_brightness = read_brightness(adb, device_id);
+        }
+        adb.execute_shell_command(device_id, "settings put system screen_brightness_mode 0");
+        adb.execute_shell_command(device_id, "settings put system screen_brightness 0");
+    }
 
     if (!renderer.init(window.get_native_handle())) {
         window.post_task([&window]() {
@@ -515,9 +576,9 @@ bool start_stream(
     return true;
 }
 
-void unlock_device_if_needed(const std::string& device_id) {
+bool unlock_device_if_needed(const std::string& device_id, pm::window::IWindow* window) {
     pm::Settings settings = pm::load_settings();
-    if (settings.m_pin.empty()) return;
+    if (settings.m_pin.empty()) return true;
     
     pm::adb::AdbClient adb;
     
@@ -531,7 +592,32 @@ void unlock_device_if_needed(const std::string& device_id) {
             : trust_state.substr(current_pos, line_end - current_pos);
         if (current_user_line.find("deviceLocked=0") != std::string::npos) {
             // Cave man see screen already open, do not key smash!
-            return;
+            return true;
+        }
+    }
+    
+    // Cave man check power saving mode before PIN
+    std::string low_power_state = adb.execute_shell_command(device_id, "settings get global low_power");
+    low_power_state.erase(low_power_state.find_last_not_of(" \n\r\t") + 1);
+    if (low_power_state == "1" || low_power_state == "true") {
+        bool disable_power_saving = false;
+        if (window) {
+#ifdef _WIN32
+            int answer = MessageBoxA(
+                (HWND)window->get_native_handle(),
+                "Das Geraet befindet sich im Energiesparmodus. Die PIN-Eingabe schlaegt dadurch fehl.\n\nDarf die App den Energiesparmodus deaktivieren?",
+                "Energiesparmodus",
+                MB_YESNO | MB_ICONQUESTION
+            );
+            if (answer == IDYES) disable_power_saving = true;
+#endif
+        }
+        if (disable_power_saving) {
+            adb.execute_shell_command(device_id, "settings put global low_power 0");
+            adb.execute_shell_command(device_id, "cmd power set-mode 0");
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        } else {
+            return false;
         }
     }
     
@@ -566,6 +652,7 @@ void unlock_device_if_needed(const std::string& device_id) {
     
     // Cave man wait for unlock animation
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    return true;
 }
 
 }
@@ -614,7 +701,9 @@ static int app_main() {
     window->set_fps_limited(initial_settings.max_fps == 30);
     window->set_resolution_limited(initial_settings.max_size == 720);
     window->set_compatibility_mode(initial_settings.m_compatibility_mode);
+    window->set_lowest_brightness(initial_settings.m_lowest_brightness);
 
+    SavedBrightness saved_brightness; // Cave man remember phone sun level
     std::atomic<bool> should_stop{false};
     pm::stream::ScrcpyClient scrcpy;
     pm::stream::VideoRenderer renderer;
@@ -650,6 +739,12 @@ static int app_main() {
                 current_settings.m_compatibility_mode = !current_settings.m_compatibility_mode;
                 pm::save_settings(current_settings);
                 window->set_compatibility_mode(current_settings.m_compatibility_mode);
+                break;
+            }
+            case pm::window::MenuAction::TOGGLE_LOWEST_BRIGHTNESS: {
+                current_settings.m_lowest_brightness = !current_settings.m_lowest_brightness;
+                pm::save_settings(current_settings);
+                window->set_lowest_brightness(current_settings.m_lowest_brightness);
                 break;
             }
             case pm::window::MenuAction::SET_PIN: {
@@ -691,13 +786,30 @@ static int app_main() {
                 if (device_id.empty()) {
                     break;
                 }
+                std::thread([device_id, w = window.get()]() {
+                    unlock_device_if_needed(device_id, w);
+                }).detach();
+                break;
+            }
+            case pm::window::MenuAction::LOCK_DEVICE: {
+                if (!scrcpy.is_running()) {
+                    break;
+                }
+                std::string device_id = scrcpy.get_device_id();
+                if (device_id.empty()) {
+                    break;
+                }
                 std::thread([device_id]() {
-                    unlock_device_if_needed(device_id);
+                    // Cave man lock screen and turn off light
+                    pm::adb::AdbClient adb;
+                    adb.execute_shell_command(device_id, "input keyevent 223");
                 }).detach();
                 break;
             }
         }
     });
+
+    std::function<void(bool)> start_connection;
 
     auto do_restore = [&]() {
         window->post_task([&]() {
@@ -716,10 +828,14 @@ static int app_main() {
             if (scrcpy.is_running()) {
                 std::string device_id = scrcpy.get_device_id();
                 if (!device_id.empty()) {
-                    std::thread([device_id]() {
-                        unlock_device_if_needed(device_id);
+                    std::thread([device_id, w = window.get()]() {
+                        unlock_device_if_needed(device_id, w);
                     }).detach();
                 }
+            } else {
+                window->set_app_state(pm::window::AppState::SCANNING);
+                window->set_status_text("Starte neue Verbindung...");
+                start_connection(true);
             }
         });
     };
@@ -783,7 +899,7 @@ static int app_main() {
         if (fw) { fputs(client_id.c_str(), fw); fclose(fw); }
     }
 
-    auto start_connection = [&](bool automatic) {
+    start_connection = [&](bool automatic) {
         if (connection_running) return;
         
         stop_screen_poll = true;
@@ -806,7 +922,7 @@ static int app_main() {
 
             SetupState setup_state = load_setup_state();
             if (!setup_state.configured) {
-                run_first_time_setup(adb, *window, scrcpy, renderer, input, should_stop);
+                run_first_time_setup(adb, *window, scrcpy, renderer, input, should_stop, &saved_brightness);
                 return;
             }
 
@@ -834,56 +950,65 @@ static int app_main() {
                 w->set_status_text(name.empty() ? "Verbunden" : name);
             });
             std::this_thread::sleep_for(std::chrono::seconds(1));
-            unlock_device_if_needed(tcp_device->id);
-            if (start_stream(*window, scrcpy, renderer, input, tcp_device->id)) {
-                // Parse IP from device ID (e.g. 192.168.1.100:5555)
-                std::string device_ip = tcp_device->id;
-                auto pos = device_ip.find(':');
-                if (pos != std::string::npos) {
-                    device_ip = device_ip.substr(0, pos);
-                }
-
+            if (!unlock_device_if_needed(tcp_device->id, window.get())) {
+                window->post_task([w = window.get()]() {
+#ifdef _WIN32
+                    PostMessageA((HWND)w->get_native_handle(), WM_CLOSE, 0, 0);
+#else
+                    exit(0);
+#endif
+                });
+                return;
+            }
+            if (start_stream(*window, scrcpy, renderer, input, tcp_device->id, &saved_brightness)) {
                 stop_screen_poll = false;
                 if (screen_poll_thread.joinable()) {
                     screen_poll_thread.join();
                 }
 
-                screen_poll_thread = std::thread([&, device_ip]() {
-                    httplib::Client cli(device_ip, 18294);
-                    cli.set_connection_timeout(1, 0); // 1s
-                    cli.set_read_timeout(1, 500000);   // 1.5s
-                    
+                screen_poll_thread = std::thread([&, device_id = tcp_device->id]() {
+                    pm::adb::AdbClient poll_adb;
                     bool last_screen_on = true;
                     
-                    while (!should_stop && !stop_screen_poll && scrcpy.is_running()) {
-                        auto res = cli.Get("/screen");
-                        if (res && res->status == 200) {
-                            try {
-                                auto resp_json = nlohmann::json::parse(res->body);
-                                bool screen_on = resp_json["screenOn"].get<bool>();
-                                if (screen_on != last_screen_on) {
-                                    last_screen_on = screen_on;
-                                    window->post_task([&, screen_on]() {
-                                        if (!screen_on) {
-                                            if (window->is_visible()) {
-                                                window->hide();
-                                                if (tray) tray->show();
-                                            }
-                                        } else {
-                                            if (!window->is_visible()) {
-                                                window->show();
-                                                if (tray) tray->hide();
-                                            }
-                                        }
-                                    });
+                    while (!should_stop && !stop_screen_poll) {
+                        // Cave man ask DisplayManager, not PowerManager — power lock = power button lag
+                        // Newer Androids use mDisplayState instead of mGlobalDisplayState
+                        std::string display_state = poll_adb.execute_shell_command(
+                            device_id, "dumpsys display | grep -E 'mGlobalDisplayState|mDisplayState='");
+                        
+                        bool screen_on = true; // assume on if parse fail
+                        if (display_state.find("OFF") != std::string::npos) {
+                            screen_on = false;
+                        }
+                        if (screen_on != last_screen_on) {
+                            last_screen_on = screen_on;
+                            
+                            if (!screen_on) {
+                                // Cave man put sun brightness back when screen goes off
+                                if (saved_brightness.brightness >= 0) {
+                                    pm::adb::AdbClient restore_adb;
+                                    restore_brightness(restore_adb, saved_brightness);
+                                    saved_brightness = {}; // Cave man forget — already restored
                                 }
-                            } catch (...) {
-                                // Ignore JSON parse error
+                                
+                                window->post_task([&]() {
+                                    // Cave man hide window to tray when phone screen off — no black screen!
+                                    if (window->is_visible()) {
+                                        window->hide();
+                                        if (tray) tray->show();
+                                    }
+                                    window->set_app_state(pm::window::AppState::SETUP);
+                                });
+                                // Cave man stop everything to save battery when screen off
+                                if (scrcpy.is_running()) {
+                                    scrcpy.stop();
+                                }
+                                break; // Kill the poll thread entirely! Fully disconnected.
                             }
                         }
                         
-                        // Sleep 1 second before next poll (using 10x 100ms sleep for responsiveness to stop request)
-                        for (int i = 0; i < 10 && !should_stop && !stop_screen_poll && scrcpy.is_running(); ++i) {
+                        // Cave man sleep 500ms before next poll
+                        for (int i = 0; i < 5 && !should_stop && !stop_screen_poll; ++i) {
                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
                         }
                     }
@@ -911,9 +1036,17 @@ static int app_main() {
 
     should_stop = true;
     stop_screen_poll = true;
+
+    // Cave man put sun brightness back before leaving cave, while tunnel still strong
+    if (saved_brightness.brightness >= 0) {
+        pm::adb::AdbClient restore_adb;
+        restore_brightness(restore_adb, saved_brightness);
+    }
+
     scrcpy.stop();
     if (connection_thread.joinable()) connection_thread.join();
     if (screen_poll_thread.joinable()) screen_poll_thread.join();
+
     if (tray) tray->hide();
 
 #ifdef _WIN32
