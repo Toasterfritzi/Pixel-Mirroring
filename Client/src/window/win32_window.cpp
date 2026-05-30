@@ -792,6 +792,7 @@ void Win32Window::show_context_menu(POINT pt) {
     constexpr UINT ID_SET_PIN       = 1004;
     constexpr UINT ID_UNLOCK_DEVICE = 1005;
     constexpr UINT ID_TOGGLE_COMPAT = 1006;
+    constexpr UINT ID_TOGGLE_LOWEST_BRIGHTNESS = 1007;
 
     AppendMenuW(menu, MF_STRING, ID_TOGGLE_FPS,
         fps_limited_ ? L"\u2713  FPS begrenzen (30)" : L"    FPS begrenzen (30)");
@@ -799,6 +800,8 @@ void Win32Window::show_context_menu(POINT pt) {
         resolution_limited_ ? L"\u2713  Aufloesung begrenzen (720p)" : L"    Aufloesung begrenzen (720p)");
     AppendMenuW(menu, MF_STRING, ID_TOGGLE_COMPAT,
         compatibility_mode_ ? L"\u2713  Kompatibilitaetsmodus (langsame PIN)" : L"    Kompatibilitaetsmodus (langsame PIN)");
+    AppendMenuW(menu, MF_STRING, ID_TOGGLE_LOWEST_BRIGHTNESS,
+        lowest_brightness_ ? L"\u2713  Bildschirm auf niedrigste Helligkeit" : L"    Bildschirm auf niedrigste Helligkeit");
     AppendMenuW(menu, MF_STRING, ID_SET_PIN, L"    PIN zum Entsperren festlegen");
     if (app_state_ == AppState::STREAMING) {
         AppendMenuW(menu, MF_STRING, ID_UNLOCK_DEVICE, L"    Handy entsperren (Strg+U)");
@@ -819,6 +822,7 @@ void Win32Window::show_context_menu(POINT pt) {
         case ID_TOGGLE_FPS:    action = MenuAction::TOGGLE_FPS_LIMIT; break;
         case ID_TOGGLE_RES:    action = MenuAction::TOGGLE_RESOLUTION_LIMIT; break;
         case ID_TOGGLE_COMPAT: action = MenuAction::TOGGLE_COMPATIBILITY_MODE; break;
+        case ID_TOGGLE_LOWEST_BRIGHTNESS: action = MenuAction::TOGGLE_LOWEST_BRIGHTNESS; break;
         case ID_SET_PIN:       action = MenuAction::SET_PIN; break;
         case ID_UNLOCK_DEVICE: action = MenuAction::UNLOCK_DEVICE; break;
         default: return;

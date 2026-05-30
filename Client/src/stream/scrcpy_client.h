@@ -29,6 +29,7 @@ public:
         bool audio = false; 
         bool control = true;
         bool tunnel_forward = false;
+        bool lowest_brightness = true;
     };
 
     ScrcpyClient();
