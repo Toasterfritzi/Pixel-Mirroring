@@ -44,6 +44,43 @@ struct SetupState {
     std::string device_name;
 };
 
+// Cave man remember sun brightness before making screen dark
+struct SavedBrightness {
+    int brightness = -1;           // -1 = not saved
+    int brightness_mode = -1;      // -1 = not saved, 0 = manual, 1 = auto
+    std::string device_id;         // which phone this belong to
+};
+
+// Cave man read sun level from phone before smashing it to zero
+SavedBrightness read_brightness(pm::adb::AdbClient& adb, const std::string& device_id) {
+    SavedBrightness saved;
+    saved.device_id = device_id;
+
+    std::string brightness_str = adb.execute_shell_command(
+        device_id, "settings get system screen_brightness");
+    brightness_str.erase(brightness_str.find_last_not_of(" \n\r\t") + 1);
+    try { saved.brightness = std::stoi(brightness_str); } catch (...) {}
+
+    std::string mode_str = adb.execute_shell_command(
+        device_id, "settings get system screen_brightness_mode");
+    mode_str.erase(mode_str.find_last_not_of(" \n\r\t") + 1);
+    try { saved.brightness_mode = std::stoi(mode_str); } catch (...) {}
+
+    return saved;
+}
+
+// Cave man put sun brightness back to old level
+void restore_brightness(pm::adb::AdbClient& adb, const SavedBrightness& saved) {
+    if (saved.device_id.empty() || saved.brightness < 0) return;
+
+    if (saved.brightness_mode >= 0) {
+        adb.execute_shell_command(saved.device_id,
+            "settings put system screen_brightness_mode " + std::to_string(saved.brightness_mode));
+    }
+    adb.execute_shell_command(saved.device_id,
+        "settings put system screen_brightness " + std::to_string(saved.brightness));
+}
+
 class ScopeExit {
 public:
     explicit ScopeExit(std::function<void()> fn) : fn_(std::move(fn)) {}
@@ -249,7 +286,8 @@ bool start_stream(
     pm::stream::ScrcpyClient& scrcpy,
     pm::stream::VideoRenderer& renderer,
     pm::input::InputHandler& input,
-    const std::string& device_id
+    const std::string& device_id,
+    SavedBrightness* out_saved_brightness
 );
 
 bool unlock_device_if_needed(const std::string& device_id, pm::window::IWindow* window = nullptr);
@@ -328,7 +366,8 @@ bool run_first_time_setup(
     pm::stream::ScrcpyClient& scrcpy,
     pm::stream::VideoRenderer& renderer,
     pm::input::InputHandler& input,
-    std::atomic<bool>& should_stop
+    std::atomic<bool>& should_stop,
+    SavedBrightness* out_saved_brightness
 ) {
     clear_setup_state();
 
@@ -445,7 +484,7 @@ bool run_first_time_setup(
         });
         return false;
     }
-    if (!start_stream(window, scrcpy, renderer, input, tcp_device->id)) {
+    if (!start_stream(window, scrcpy, renderer, input, tcp_device->id, out_saved_brightness)) {
         clear_setup_state();
         return false;
     }
@@ -474,7 +513,8 @@ bool start_stream(
     pm::stream::ScrcpyClient& scrcpy,
     pm::stream::VideoRenderer& renderer,
     pm::input::InputHandler& input,
-    const std::string& device_id
+    const std::string& device_id,
+    SavedBrightness* out_saved_brightness
 ) {
     window.post_task([&window]() { window.set_status_text("Starte Video-Stream..."); });
     pm::stream::ScrcpyClient::Config config;
@@ -489,6 +529,9 @@ bool start_stream(
     if (settings.m_lowest_brightness) {
         // CAVE MAN DECREASE SUN SHINE SO SMARTPHONE SCREEN IS DARKEST SHADE OF GREY
         pm::adb::AdbClient adb;
+        if (out_saved_brightness && out_saved_brightness->brightness < 0) {
+            *out_saved_brightness = read_brightness(adb, device_id);
+        }
         adb.execute_shell_command(device_id, "settings put system screen_brightness_mode 0");
         adb.execute_shell_command(device_id, "settings put system screen_brightness 0");
     }
@@ -660,6 +703,7 @@ static int app_main() {
     window->set_compatibility_mode(initial_settings.m_compatibility_mode);
     window->set_lowest_brightness(initial_settings.m_lowest_brightness);
 
+    SavedBrightness saved_brightness; // Cave man remember phone sun level
     std::atomic<bool> should_stop{false};
     pm::stream::ScrcpyClient scrcpy;
     pm::stream::VideoRenderer renderer;
@@ -863,7 +907,7 @@ static int app_main() {
 
             SetupState setup_state = load_setup_state();
             if (!setup_state.configured) {
-                run_first_time_setup(adb, *window, scrcpy, renderer, input, should_stop);
+                run_first_time_setup(adb, *window, scrcpy, renderer, input, should_stop, &saved_brightness);
                 return;
             }
 
@@ -901,7 +945,7 @@ static int app_main() {
                 });
                 return;
             }
-            if (start_stream(*window, scrcpy, renderer, input, tcp_device->id)) {
+            if (start_stream(*window, scrcpy, renderer, input, tcp_device->id, &saved_brightness)) {
                 stop_screen_poll = false;
                 if (screen_poll_thread.joinable()) {
                     screen_poll_thread.join();
@@ -925,6 +969,13 @@ static int app_main() {
                             last_screen_on = screen_on;
                             
                             if (!screen_on) {
+                                // Cave man put sun brightness back when screen goes off
+                                if (saved_brightness.brightness >= 0) {
+                                    pm::adb::AdbClient restore_adb;
+                                    restore_brightness(restore_adb, saved_brightness);
+                                    saved_brightness = {}; // Cave man forget — already restored
+                                }
+                                
                                 window->post_task([&]() {
                                     // Cave man hide window to tray when phone screen off — no black screen!
                                     if (window->is_visible()) {
@@ -970,9 +1021,17 @@ static int app_main() {
 
     should_stop = true;
     stop_screen_poll = true;
+
+    // Cave man put sun brightness back before leaving cave, while tunnel still strong
+    if (saved_brightness.brightness >= 0) {
+        pm::adb::AdbClient restore_adb;
+        restore_brightness(restore_adb, saved_brightness);
+    }
+
     scrcpy.stop();
     if (connection_thread.joinable()) connection_thread.join();
     if (screen_poll_thread.joinable()) screen_poll_thread.join();
+
     if (tray) tray->hide();
 
 #ifdef _WIN32
